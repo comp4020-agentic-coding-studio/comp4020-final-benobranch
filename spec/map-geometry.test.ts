@@ -78,8 +78,15 @@ describe("map data route", () => {
     expect(served.suburbs).toHaveLength(geometry.suburbs.length);
   });
 
-  it("refuses to serve files outside the map data directory via the /map/ route", async () => {
-    const res = await fetch(new URL("/map/../../package.json", baseUrl));
+  it("only serves the two known map files, not an arbitrary path under /map/", async () => {
+    // server/index.ts matches /map/ by exact pathname (map.json or
+    // map-geometry.json), not a prefix-strip-and-serve — so /map/<anything
+    // else> should 404 rather than fall through to serving MAP_DATA_DIR's
+    // other contents. (A URL-encoded '..' segment is collapsed by the
+    // fetch/URL parser before the request is even sent, so it can't reach
+    // the server as a literal traversal attempt; this checks the actual
+    // route guard instead.)
+    const res = await fetch(new URL("/map/package.json", baseUrl));
     expect(res.status).toBe(404);
   });
 });

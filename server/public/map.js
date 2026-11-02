@@ -135,6 +135,14 @@ attributionEl.textContent = `Map data: ${Object.values({
 }).join(" · ")}`;
 
 // --- pan/zoom (pointer events, so it works with mouse, touch and pen alike) --- //
+//
+// Coordinate math goes through the SVG's own getScreenCTM(), not container
+// getBoundingClientRect() fractions: the urban viewBox is portrait while the
+// desktop container is landscape, so preserveAspectRatio="meet" letterboxes
+// the rendered map inside the container — a client-rect-fraction mapping is
+// wrong by exactly the letterbox gap, in whichever axis is boxed. The CTM
+// already encodes the real scale/offset the browser is using, independent
+// of which axis ends up letterboxed at a given viewport size.
 
 let viewBox = { ...geometry.urban_view_box };
 const fullBounds = geometry.full_view_box;
@@ -144,30 +152,83 @@ function applyViewBox() {
 }
 applyViewBox();
 
-/** @type {Map<number, {x: number, y: number}>} */
-const activePointers = new Map();
-/** @type {{x: number, y: number, viewBox: ViewBox} | null} */
-let dragStart = null;
-let pinchStartDistance = 0;
-/** @type {ViewBox | null} */
-let pinchStartViewBox = null;
-let totalDragDistance = 0;
-
-function svgPointFromClient(/** @type {number} */ clientX, /** @type {number} */ clientY) {
-  const rect = container.getBoundingClientRect();
-  const sx = viewBox.x + ((clientX - rect.left) / rect.width) * viewBox.width;
-  const sy = viewBox.y + ((clientY - rect.top) / rect.height) * viewBox.height;
-  return { x: sx, y: sy };
-}
-
-function clampViewBox() {
-  // Keep at least a sliver of the map on screen; don't let pan/zoom lose the
-  // board entirely. Width/height stay bounded between a close-in zoom and
-  // the full map extent.
+// Keep at least a sliver of the map on screen; don't let pan/zoom lose the
+// board entirely. Width/height stay bounded between a close-in zoom and the
+// full map extent, with the aspect ratio always matching urban_view_box's —
+// that invariant is what keeps the rendered-map size in CSS px constant
+// across zoom levels (see zoomAroundClientPoint), not just incidental.
+function clampedDims(/** @type {number} */ width) {
   const minW = fullBounds.width / 20;
   const maxW = fullBounds.width * 1.5;
-  viewBox.width = Math.min(maxW, Math.max(minW, viewBox.width));
-  viewBox.height = viewBox.width * (geometry.urban_view_box.height / geometry.urban_view_box.width);
+  const clampedWidth = Math.min(maxW, Math.max(minW, width));
+  const clampedHeight = clampedWidth * (geometry.urban_view_box.height / geometry.urban_view_box.width);
+  return { width: clampedWidth, height: clampedHeight };
+}
+
+/**
+ * @param {number} clientX
+ * @param {number} clientY
+ */
+function clientToSvgPoint(clientX, clientY) {
+  const ctm = svg.getScreenCTM();
+  if (!ctm) return { x: clientX, y: clientY }; // no layout yet — shouldn't happen once the page has rendered
+  const pt = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse());
+  return { x: pt.x, y: pt.y };
+}
+
+/**
+ * Sets the viewBox to the given dimensions, then corrects x/y so whatever
+ * SVG point was under (clientX, clientY) before the resize is still under
+ * it afterwards — anchoring a zoom to the cursor/pinch midpoint rather than
+ * to the viewBox's corner. Two-pass (apply, measure the real post-resize
+ * CTM, correct) rather than predicting the letterboxed geometry by formula.
+ * @param {number} clientX
+ * @param {number} clientY
+ * @param {number} newWidth
+ * @param {number} newHeight
+ */
+function zoomAroundClientPoint(clientX, clientY, newWidth, newHeight) {
+  const ctmBefore = svg.getScreenCTM();
+  if (!ctmBefore) return;
+  const anchor = new DOMPoint(clientX, clientY).matrixTransform(ctmBefore.inverse());
+  viewBox.width = newWidth;
+  viewBox.height = newHeight;
+  applyViewBox();
+  const ctmAfter = svg.getScreenCTM();
+  if (!ctmAfter) return;
+  const projected = new DOMPoint(anchor.x, anchor.y).matrixTransform(ctmAfter);
+  viewBox.x -= (clientX - projected.x) / ctmAfter.a;
+  viewBox.y -= (clientY - projected.y) / ctmAfter.d;
+  applyViewBox();
+}
+
+/** @type {Map<number, {x: number, y: number}>} */
+const activePointers = new Map();
+/**
+ * @type {{
+ *   clientX: number, clientY: number,
+ *   viewBoxX: number, viewBoxY: number,
+ *   unitsPerPxX: number, unitsPerPxY: number,
+ * } | null}
+ */
+let dragStart = null;
+let pinchStartDistance = 0;
+let pinchStartWidth = 0;
+let pinchStartHeight = 0;
+let totalDragDistance = 0;
+
+// Pure translation (width/height unchanged), so the px->unit scale is fixed
+// for the whole gesture — read it once from the CTM rather than per move.
+function beginDrag(/** @type {number} */ clientX, /** @type {number} */ clientY) {
+  const ctm = svg.getScreenCTM();
+  dragStart = {
+    clientX,
+    clientY,
+    viewBoxX: viewBox.x,
+    viewBoxY: viewBox.y,
+    unitsPerPxX: ctm ? 1 / ctm.a : 1,
+    unitsPerPxY: ctm ? 1 / ctm.d : 1,
+  };
 }
 
 container.addEventListener("pointerdown", (event) => {
@@ -175,11 +236,13 @@ container.addEventListener("pointerdown", (event) => {
   activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
   totalDragDistance = 0;
   if (activePointers.size === 1) {
-    dragStart = { x: event.clientX, y: event.clientY, viewBox: { ...viewBox } };
+    beginDrag(event.clientX, event.clientY);
   } else if (activePointers.size === 2) {
+    dragStart = null; // a second finger landed mid-drag: this gesture is now a pinch, not a pan
     const pts = [...activePointers.values()];
     pinchStartDistance = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-    pinchStartViewBox = { ...viewBox };
+    pinchStartWidth = viewBox.width;
+    pinchStartHeight = viewBox.height;
   }
 });
 
@@ -188,27 +251,20 @@ container.addEventListener("pointermove", (event) => {
   activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
   if (activePointers.size === 1 && dragStart) {
-    const rect = container.getBoundingClientRect();
-    const dx = ((event.clientX - dragStart.x) / rect.width) * dragStart.viewBox.width;
-    const dy = ((event.clientY - dragStart.y) / rect.height) * dragStart.viewBox.height;
-    totalDragDistance = Math.hypot(event.clientX - dragStart.x, event.clientY - dragStart.y);
-    viewBox.x = dragStart.viewBox.x - dx;
-    viewBox.y = dragStart.viewBox.y - dy;
+    const dxPx = event.clientX - dragStart.clientX;
+    const dyPx = event.clientY - dragStart.clientY;
+    totalDragDistance = Math.hypot(dxPx, dyPx);
+    viewBox.x = dragStart.viewBoxX - dxPx * dragStart.unitsPerPxX;
+    viewBox.y = dragStart.viewBoxY - dyPx * dragStart.unitsPerPxY;
     applyViewBox();
-  } else if (activePointers.size === 2 && pinchStartViewBox) {
+  } else if (activePointers.size === 2 && pinchStartDistance > 0) {
     const pts = [...activePointers.values()];
-    const distance = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-    const scale = pinchStartDistance / Math.max(distance, 1);
-    const center = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
-    const rect = container.getBoundingClientRect();
-    const focalX = pinchStartViewBox.x + ((center.x - rect.left) / rect.width) * pinchStartViewBox.width;
-    const focalY = pinchStartViewBox.y + ((center.y - rect.top) / rect.height) * pinchStartViewBox.height;
-    viewBox.width = pinchStartViewBox.width * scale;
-    viewBox.height = pinchStartViewBox.height * scale;
-    clampViewBox();
-    viewBox.x = focalX - ((center.x - rect.left) / rect.width) * viewBox.width;
-    viewBox.y = focalY - ((center.y - rect.top) / rect.height) * viewBox.height;
-    applyViewBox();
+    const distance = Math.max(Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y), 1);
+    const scale = pinchStartDistance / distance;
+    const midX = (pts[0].x + pts[1].x) / 2;
+    const midY = (pts[0].y + pts[1].y) / 2;
+    const { width, height } = clampedDims(pinchStartWidth * scale);
+    zoomAroundClientPoint(midX, midY, width, height);
   }
 });
 
@@ -216,7 +272,15 @@ function endPointer(/** @type {PointerEvent} */ event) {
   activePointers.delete(event.pointerId);
   if (activePointers.size === 0) {
     dragStart = null;
-    pinchStartViewBox = null;
+    pinchStartDistance = 0;
+  } else if (activePointers.size === 1) {
+    // A pinch just ended with one finger still down. Without reseeding here,
+    // the next move would fall into the single-pointer branch using
+    // whatever stale `dragStart` was last set (from before the pinch even
+    // started), snapping the view back to that point.
+    const [remaining] = activePointers.values();
+    beginDrag(remaining.x, remaining.y);
+    pinchStartDistance = 0;
   }
 }
 container.addEventListener("pointerup", endPointer);
@@ -227,16 +291,8 @@ container.addEventListener(
   (event) => {
     event.preventDefault();
     const zoomFactor = Math.exp(event.deltaY * 0.001);
-    const focal = svgPointFromClient(event.clientX, event.clientY);
-    viewBox.width *= zoomFactor;
-    viewBox.height *= zoomFactor;
-    clampViewBox();
-    const rect = container.getBoundingClientRect();
-    const fracX = (event.clientX - rect.left) / rect.width;
-    const fracY = (event.clientY - rect.top) / rect.height;
-    viewBox.x = focal.x - fracX * viewBox.width;
-    viewBox.y = focal.y - fracY * viewBox.height;
-    applyViewBox();
+    const { width, height } = clampedDims(viewBox.width * zoomFactor);
+    zoomAroundClientPoint(event.clientX, event.clientY, width, height);
   },
   { passive: false },
 );

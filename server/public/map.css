@@ -1,10 +1,21 @@
 /* Map screen only — style.css has the shared dark/HUD chrome (ANU-007's art
    direction); this file is just the map surface, markers and legend. */
 
+/* style.css's `body { padding-top: 2.5rem }` clears a fixed #status bar
+   this page doesn't have (map.html has no join/HUD status indicator) — left
+   in place, it pushes 100vh of content 2.5rem below the actual viewport, so
+   the legend/attribution footer ends up clipped below the fold with no way
+   to scroll to it (the map surface captures wheel events as zoom, not
+   scroll). 100dvh (not 100vh) also avoids the iOS Safari address-bar
+   resize trapping the footer off-screen. */
+body:has(.map-screen) {
+  padding-top: 0;
+}
+
 .map-screen {
   max-width: none;
   width: 100%;
-  height: 100vh;
+  height: 100dvh;
   padding: 0.75rem;
   gap: 0.5rem;
 }
@@ -86,7 +97,13 @@
   stroke: #05201c;
   stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
-  cursor: pointer;
+  /* Marker radii are in map units, so they grow on-screen as you zoom in
+     and can visually overhang into a neighbouring suburb's area. Letting
+     clicks pass through means a tap always resolves to whichever suburb
+     path is actually underneath — which already carries this marker's
+     data-center info via describe(), so nothing is lost by not being
+     clickable in its own right. */
+  pointer-events: none;
 }
 
 .dc-marker--mega {
@@ -106,7 +123,7 @@
   stroke: var(--accent);
   stroke-width: 2.5;
   vector-effect: non-scaling-stroke;
-  cursor: pointer;
+  pointer-events: none; /* see .dc-marker — same overhang-at-zoom reasoning */
 }
 
 .map-tooltip {
