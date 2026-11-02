@@ -9,24 +9,77 @@
   <body>
     <div id="status" class="status" data-state="connecting" role="status">Connecting…</div>
 
-    <main id="join-screen" class="screen">
+    <main id="home-screen" class="screen">
       <div class="panel">
         <h1>Infrastructure Siege</h1>
         <p class="tagline">A real-time territory game over real Canberra.</p>
-        <form id="join-form">
-          <label for="name">Callsign</label>
-          <input id="name" name="name" maxlength="40" required autocomplete="off" />
-          <button type="submit">Join</button>
-        </form>
+
+        <nav class="menu">
+          <button id="continue-button" type="button" disabled>Continue</button>
+          <button id="browse-button" type="button">Server browse</button>
+          <button id="options-button" type="button">Options</button>
+        </nav>
+
         <p><a href="/readme/">What this app is for →</a></p>
       </div>
     </main>
 
-    <main id="hud-screen" class="screen" hidden>
+    <main id="browse-screen" class="screen" hidden>
       <header class="hud-bar">
-        <span class="hud-bar__title">Lobby: <span id="lobby-name">—</span></span>
+        <a href="#/home" class="back-link">← Home</a>
+        <span class="hud-bar__title">Server browse</span>
+      </header>
+
+      <section class="panel">
+        <h2>Open lobbies</h2>
+        <ul id="lobby-list" class="lobby-list"></ul>
+      </section>
+
+      <section class="panel">
+        <h2>Create a lobby</h2>
+        <form id="create-lobby-form">
+          <label for="lobby-name">Lobby name</label>
+          <input id="lobby-name" name="lobbyName" maxlength="40" required autocomplete="off" />
+          <label for="lobby-capacity">Players (4–12)</label>
+          <input id="lobby-capacity" name="lobbyCapacity" type="number" min="4" max="12" value="4" required />
+          <label for="create-callsign">Your callsign in this game</label>
+          <input id="create-callsign" name="createCallsign" maxlength="40" required autocomplete="off" />
+          <button type="submit">Create</button>
+        </form>
+        <p id="browse-error" class="error" hidden></p>
+      </section>
+    </main>
+
+    <main id="name-prompt-screen" class="screen" hidden>
+      <div class="panel">
+        <h1>Choose your callsign</h1>
+        <p class="tagline">
+          This is your name in <strong id="name-prompt-lobby-name">this lobby</strong> — it's locked in once you
+          join, for the rest of the game.
+        </p>
+        <form id="name-prompt-form">
+          <label for="join-callsign">Callsign</label>
+          <input id="join-callsign" name="joinCallsign" maxlength="40" required autocomplete="off" />
+          <button type="submit">Join</button>
+        </form>
+        <p id="name-prompt-error" class="error" hidden></p>
+        <p><a href="#/browse" class="back-link">← Back to browse</a></p>
+      </div>
+    </main>
+
+    <main id="lobby-screen" class="screen" hidden>
+      <header class="hud-bar">
+        <a href="#/browse" class="back-link">← Browse</a>
+        <span class="hud-bar__title">Lobby: <span id="lobby-name-display">—</span></span>
         <span id="player-count" class="hud-bar__count">0 online</span>
       </header>
+
+      <section class="panel">
+        <p>
+          Status: <span id="lobby-status" class="badge">waiting</span>
+        </p>
+        <button id="start-button" type="button">Start game</button>
+      </section>
 
       <section class="panel">
         <h2>Shared counter</h2>
@@ -36,9 +89,19 @@
       </section>
 
       <section class="panel">
-        <h2>Online</h2>
+        <h2>Players</h2>
         <ul id="player-list" class="player-list"></ul>
       </section>
+    </main>
+
+    <main id="options-screen" class="screen" hidden>
+      <header class="hud-bar">
+        <a href="#/home" class="back-link">← Home</a>
+        <span class="hud-bar__title">Options</span>
+      </header>
+      <div class="panel">
+        <p class="subtle">Coming soon.</p>
+      </div>
     </main>
 
     <script type="module" src="/app.js"></script>

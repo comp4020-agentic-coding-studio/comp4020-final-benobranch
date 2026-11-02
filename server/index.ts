@@ -5,7 +5,7 @@
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { WebSocketServer, type WebSocket } from "ws";
-import { DEFAULT_LOBBY_ID, openStore, type StoredLobby } from "./store.ts";
+import { openStore, type StoredLobby } from "./store.ts";
 import { renderReadmePage } from "./readme-page.ts";
 import { serveStatic } from "./static-files.ts";
 import {
@@ -27,8 +27,12 @@ const store = openStore(`${DATA_DIR}/game.db`);
 
 interface ConnMeta {
   playerId: string;
-  name: string;
-  lobbyId: string;
+  /**
+   * null until the player has joined or created a lobby — `hello` no
+   * longer auto-joins one, since a per-lobby callsign (ADR 0002) has
+   * nowhere to come from until the player picks a lobby.
+   */
+  lobbyId: string | null;
   registered: boolean;
   watchingLobbies: boolean;
 }
@@ -59,6 +63,7 @@ function buildLobbyState(lobby: StoredLobby): LobbyState {
     lobbyId: lobby.lobbyId,
     name: lobby.name,
     capacity: lobby.capacity,
+    started: lobby.started,
     count: lobby.count,
     lastBumpedBy: lobby.lastBumpedBy,
     members: members.map((m) => ({ playerId: m.playerId, name: m.name, online: isOnline(m.playerId) })),
@@ -71,6 +76,7 @@ function buildLobbySummary(lobby: StoredLobby): LobbySummary {
     lobbyId: lobby.lobbyId,
     name: lobby.name,
     capacity: lobby.capacity,
+    started: lobby.started,
     memberCount: members.length,
     onlineCount: members.filter((m) => isOnline(m.playerId)).length,
   };
@@ -78,6 +84,13 @@ function buildLobbySummary(lobby: StoredLobby): LobbySummary {
 
 function send(socket: WebSocket, message: ServerMessage): void {
   if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
+}
+
+function joinErrorMessage(reason: "not-found" | "full" | "started" | "name-taken"): string {
+  if (reason === "full") return "that lobby is full";
+  if (reason === "started") return "that game has already started";
+  if (reason === "name-taken") return "that name is already taken in this lobby";
+  return "no such lobby";
 }
 
 function broadcastLobbyState(lobbyId: string): void {
@@ -177,28 +190,14 @@ wss.on("connection", (socket) => {
     }
 
     if (message.type === "hello") {
-      const { playerId, token } = store.resolvePlayer(message.name, message.token);
+      const { playerId, token } = store.resolvePlayer(message.token);
+      const lobbyId = store.getCurrentLobbyId(playerId); // null if they've never joined one
+      const lobby = lobbyId ? store.getLobby(lobbyId) : null;
 
-      let lobbyId = store.getCurrentLobbyId(playerId);
-      if (!lobbyId) {
-        const joined = store.joinLobby(playerId, DEFAULT_LOBBY_ID);
-        if (!joined.ok) {
-          // Default lobby is full — a real capacity ceiling, not expected at
-          // this project's 5+-concurrent-player target but handled rather
-          // than left to crash.
-          socket.close(1013, "no lobby available to join");
-          return;
-        }
-        lobbyId = DEFAULT_LOBBY_ID;
-      }
+      sockets.set(socket, { playerId, lobbyId, registered: true, watchingLobbies: false });
 
-      sockets.set(socket, { playerId, name: message.name, lobbyId, registered: true, watchingLobbies: false });
-
-      const lobby = store.getLobby(lobbyId);
-      if (!lobby) throw new Error(`player resolved into lobby '${lobbyId}' that doesn't exist`);
-
-      send(socket, { type: "welcome", playerId, token, lobby: buildLobbyState(lobby) });
-      broadcastLobbyState(lobbyId); // this player's online status just changed
+      send(socket, { type: "welcome", playerId, token, lobby: lobby ? buildLobbyState(lobby) : null });
+      if (lobbyId) broadcastLobbyState(lobbyId); // this player's online status just changed
       return;
     }
 
@@ -209,30 +208,43 @@ wss.on("connection", (socket) => {
     }
 
     if (message.type === "bump") {
+      if (!meta.lobbyId) return; // not in a lobby — nothing to bump
       // Synchronous store call: no await between the mutation and the
       // broadcast, so this handler can't interleave with another one on the
       // same event loop — see docs/adr/0001-persistence-and-realtime-stack.md.
-      const lobby = store.bump(meta.lobbyId, meta.name);
+      const lobby = store.bump(meta.lobbyId, meta.playerId);
       if (lobby) broadcastLobbyState(meta.lobbyId);
       return;
     }
 
     if (message.type === "createLobby") {
-      const lobby = store.createLobby(message.name, message.capacity);
-      const fromLobbyId = meta.lobbyId;
-      store.joinLobby(meta.playerId, lobby.lobbyId); // creator joins their own lobby
-      moveAllSocketsForPlayer(meta.playerId, fromLobbyId, lobby.lobbyId);
+      const lobby = store.createLobby(message.name, message.capacity, meta.playerId, message.callsign);
+      moveAllSocketsForPlayer(meta.playerId, meta.lobbyId, lobby.lobbyId);
       return;
     }
 
     if (message.type === "joinLobby") {
       const fromLobbyId = meta.lobbyId;
-      const result = store.joinLobby(meta.playerId, message.lobbyId);
+      const result = store.joinLobby(meta.playerId, message.lobbyId, message.callsign);
       if (!result.ok) {
-        send(socket, { type: "error", message: result.reason === "full" ? "that lobby is full" : "no such lobby" });
+        if (result.reason === "name-required") {
+          send(socket, { type: "nameRequired", lobbyId: result.lobbyId });
+        } else {
+          send(socket, { type: "error", message: joinErrorMessage(result.reason) });
+        }
         return;
       }
       moveAllSocketsForPlayer(meta.playerId, fromLobbyId, message.lobbyId);
+      return;
+    }
+
+    if (message.type === "startLobby") {
+      if (!meta.lobbyId) return;
+      const lobby = store.startLobby(meta.lobbyId);
+      if (lobby) {
+        broadcastLobbyState(meta.lobbyId);
+        broadcastLobbyList(); // the browse list also shows started/not-started
+      }
       return;
     }
 
@@ -252,7 +264,7 @@ wss.on("connection", (socket) => {
     sockets.delete(socket);
     // Only re-broadcast if this was this player's last open socket —
     // isOnline() already reflects the deletion above.
-    if (meta?.registered && !isOnline(meta.playerId)) {
+    if (meta?.registered && meta.lobbyId && !isOnline(meta.playerId)) {
       broadcastLobbyState(meta.lobbyId);
       broadcastLobbyList();
     }

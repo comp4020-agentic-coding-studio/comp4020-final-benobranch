@@ -4,27 +4,19 @@
 // bundler for a GUI this small. Typed against server/protocol.ts via JSDoc
 // so `pnpm typecheck` still catches a drifted message shape.
 //
-// This is still just the ANU-007 HUD adapted to ANU-008's lobby/identity
-// protocol — proving hello/welcome/lobbyState end to end with a token
-// persisted across reloads. ANU-009 replaces this with real Home/Browse/HUD
-// screens; this file deliberately doesn't grow that scope.
+// Five screens: Home, Browse, Lobby, Options (hash-routed: #/home, #/browse,
+// #/lobby/<id>, #/options — no server routing changes, shareable lobby
+// URLs) plus a non-routed Name prompt shown inline when the server reports
+// `nameRequired` for a lobby this player hasn't joined before (see ADR
+// 0002: identity is a device token, but each lobby locks in its own
+// callsign the first time a player joins it).
 /** @typedef {import("../protocol.ts").ServerMessage} ServerMessage */
 /** @typedef {import("../protocol.ts").PlayerPresence} PlayerPresence */
 /** @typedef {import("../protocol.ts").LobbyState} LobbyState */
+/** @typedef {import("../protocol.ts").LobbySummary} LobbySummary */
 
 const TOKEN_KEY = "infrastructure-siege:token";
-
-const statusEl = /** @type {HTMLElement} */ (document.getElementById("status"));
-const joinScreen = /** @type {HTMLElement} */ (document.getElementById("join-screen"));
-const hudScreen = /** @type {HTMLElement} */ (document.getElementById("hud-screen"));
-const joinForm = /** @type {HTMLFormElement} */ (document.getElementById("join-form"));
-const nameInput = /** @type {HTMLInputElement} */ (document.getElementById("name"));
-const bumpButton = /** @type {HTMLButtonElement} */ (document.getElementById("bump-button"));
-const countEl = /** @type {HTMLElement} */ (document.getElementById("count"));
-const lastBumpedByEl = /** @type {HTMLElement} */ (document.getElementById("last-bumped-by"));
-const playerCountEl = /** @type {HTMLElement} */ (document.getElementById("player-count"));
-const playerListEl = /** @type {HTMLElement} */ (document.getElementById("player-list"));
-const lobbyNameEl = document.getElementById("lobby-name");
+const LAST_CALLSIGN_KEY = "infrastructure-siege:last-callsign";
 
 function loadToken() {
   try {
@@ -33,7 +25,6 @@ function loadToken() {
     return null; // private browsing / blocked storage — fall back to a fresh identity every load
   }
 }
-
 function saveToken(/** @type {string} */ token) {
   try {
     localStorage.setItem(TOKEN_KEY, token);
@@ -41,15 +32,85 @@ function saveToken(/** @type {string} */ token) {
     // nothing to do — this session just won't resume next load
   }
 }
+function loadLastCallsign() {
+  try {
+    return localStorage.getItem(LAST_CALLSIGN_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+function saveLastCallsign(/** @type {string} */ callsign) {
+  try {
+    localStorage.setItem(LAST_CALLSIGN_KEY, callsign);
+  } catch {
+    // purely a convenience prefill — fine to drop
+  }
+}
 
-/** @type {string | null} */
-let myPlayerId = null;
-/** @type {string | null} */
-let pendingName = null;
+const statusEl = /** @type {HTMLElement} */ (document.getElementById("status"));
+
+const screens = {
+  home: /** @type {HTMLElement} */ (document.getElementById("home-screen")),
+  browse: /** @type {HTMLElement} */ (document.getElementById("browse-screen")),
+  lobby: /** @type {HTMLElement} */ (document.getElementById("lobby-screen")),
+  options: /** @type {HTMLElement} */ (document.getElementById("options-screen")),
+  namePrompt: /** @type {HTMLElement} */ (document.getElementById("name-prompt-screen")),
+};
+
+// Home
+const continueButton = /** @type {HTMLButtonElement} */ (document.getElementById("continue-button"));
+const browseButton = /** @type {HTMLButtonElement} */ (document.getElementById("browse-button"));
+const optionsButton = /** @type {HTMLButtonElement} */ (document.getElementById("options-button"));
+
+// Browse
+const lobbyListEl = /** @type {HTMLElement} */ (document.getElementById("lobby-list"));
+const createLobbyForm = /** @type {HTMLFormElement} */ (document.getElementById("create-lobby-form"));
+const lobbyNameInput = /** @type {HTMLInputElement} */ (document.getElementById("lobby-name"));
+const lobbyCapacityInput = /** @type {HTMLInputElement} */ (document.getElementById("lobby-capacity"));
+const createCallsignInput = /** @type {HTMLInputElement} */ (document.getElementById("create-callsign"));
+const browseErrorEl = /** @type {HTMLElement} */ (document.getElementById("browse-error"));
+
+// Name prompt (shown inline when joining a lobby for the first time)
+const namePromptLobbyNameEl = /** @type {HTMLElement} */ (document.getElementById("name-prompt-lobby-name"));
+const namePromptForm = /** @type {HTMLFormElement} */ (document.getElementById("name-prompt-form"));
+const joinCallsignInput = /** @type {HTMLInputElement} */ (document.getElementById("join-callsign"));
+const namePromptErrorEl = /** @type {HTMLElement} */ (document.getElementById("name-prompt-error"));
+
+// Lobby
+const lobbyNameDisplayEl = /** @type {HTMLElement} */ (document.getElementById("lobby-name-display"));
+const playerCountEl = /** @type {HTMLElement} */ (document.getElementById("player-count"));
+const lobbyStatusEl = /** @type {HTMLElement} */ (document.getElementById("lobby-status"));
+const startButton = /** @type {HTMLButtonElement} */ (document.getElementById("start-button"));
+const countEl = /** @type {HTMLElement} */ (document.getElementById("count"));
+const lastBumpedByEl = /** @type {HTMLElement} */ (document.getElementById("last-bumped-by"));
+const bumpButton = /** @type {HTMLButtonElement} */ (document.getElementById("bump-button"));
+const playerListEl = /** @type {HTMLElement} */ (document.getElementById("player-list"));
+
 /** @type {WebSocket | null} */
 let socket = null;
 let reconnectAttempt = 0;
-let hasJoined = false;
+
+// True once `welcome` has arrived at least once — the server resolves an
+// identity for every connection automatically (from the stored token, or a
+// fresh one), so there's no user input gating this, unlike a per-lobby
+// callsign.
+let registered = false;
+/** @type {string | null} */
+let myPlayerId = null;
+/** @type {LobbyState | null} */
+let currentLobby = null;
+/** @type {LobbySummary[]} */
+let lobbies = [];
+let navigateOnNextLobbyState = false;
+/**
+ * Set when the server has asked for a callsign to join this specific lobby
+ * (first join only) — render() shows the name prompt instead of re-sending
+ * `joinLobby` in a loop while this is set for the current #/lobby/<id>.
+ * @type {string | null}
+ */
+let awaitingCallsignForLobbyId = null;
+/** @type {"home" | "browse" | "lobby" | "options" | null} */
+let currentScreenName = null;
 
 function setStatus(/** @type {"connecting" | "connected" | "disconnected"} */ state) {
   statusEl.dataset.state = state;
@@ -57,10 +118,83 @@ function setStatus(/** @type {"connecting" | "connected" | "disconnected"} */ st
     state === "connecting" ? "Connecting…" : state === "connected" ? "Connected" : "Disconnected — retrying…";
 }
 
-function renderLobby(/** @type {LobbyState} */ lobby) {
-  if (lobbyNameEl) lobbyNameEl.textContent = lobby.name;
+function showError(/** @type {HTMLElement} */ el, /** @type {string} */ message) {
+  el.textContent = message;
+  el.hidden = false;
+}
+function clearError(/** @type {HTMLElement} */ el) {
+  el.hidden = true;
+}
+
+function send(/** @type {Record<string, unknown>} */ message) {
+  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+}
+
+/** @returns {{ screen: "home" | "browse" | "lobby" | "options", lobbyId?: string }} */
+function parseHash() {
+  const hash = location.hash || "#/home";
+  const lobbyMatch = hash.match(/^#\/lobby\/(.+)$/);
+  if (lobbyMatch) return { screen: "lobby", lobbyId: decodeURIComponent(lobbyMatch[1]) };
+  if (hash === "#/browse") return { screen: "browse" };
+  if (hash === "#/options") return { screen: "options" };
+  return { screen: "home" };
+}
+
+function showScreen(/** @type {"home" | "browse" | "lobby" | "options" | "namePrompt"} */ name) {
+  for (const key of /** @type {const} */ (["home", "browse", "lobby", "options", "namePrompt"])) {
+    screens[key].hidden = key !== name;
+  }
+}
+
+function updateContinueButton() {
+  continueButton.disabled = !currentLobby;
+}
+
+function renderLobbyList() {
+  if (lobbies.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "empty";
+    empty.textContent = "No lobbies yet — create one below.";
+    lobbyListEl.replaceChildren(empty);
+    return;
+  }
+  lobbyListEl.replaceChildren(
+    ...lobbies.map((lobby) => {
+      const li = document.createElement("li");
+      const info = document.createElement("div");
+      info.className = "lobby-list__info";
+      const nameEl = document.createElement("span");
+      nameEl.className = "lobby-list__name";
+      nameEl.textContent = lobby.name; // textContent: lobby names are untrusted input
+      const metaEl = document.createElement("span");
+      metaEl.className = "lobby-list__meta";
+      metaEl.textContent = `${lobby.memberCount}/${lobby.capacity} players · ${lobby.onlineCount} online · ${
+        lobby.started ? "started" : "waiting"
+      }`;
+      info.append(nameEl, metaEl);
+
+      const isFull = lobby.memberCount >= lobby.capacity;
+      const joinButton = document.createElement("button");
+      joinButton.type = "button";
+      joinButton.textContent = lobby.started ? "Started" : isFull ? "Full" : "Join";
+      joinButton.disabled = lobby.started || isFull;
+      joinButton.addEventListener("click", () => {
+        location.hash = `#/lobby/${encodeURIComponent(lobby.lobbyId)}`;
+      });
+
+      li.append(info, joinButton);
+      return li;
+    }),
+  );
+}
+
+function renderLobbyScreen(/** @type {LobbyState} */ lobby) {
+  lobbyNameDisplayEl.textContent = lobby.name;
   countEl.textContent = String(lobby.count);
   lastBumpedByEl.textContent = lobby.lastBumpedBy ?? "nobody yet";
+  lobbyStatusEl.textContent = lobby.started ? "started" : "waiting";
+  lobbyStatusEl.dataset.state = lobby.started ? "started" : "waiting";
+  startButton.hidden = lobby.started;
 
   const onlineCount = lobby.members.filter((m) => m.online).length;
   playerCountEl.textContent = `${onlineCount} online`;
@@ -82,24 +216,104 @@ function renderLobby(/** @type {LobbyState} */ lobby) {
   );
 }
 
+function showNamePrompt(/** @type {string} */ lobbyId) {
+  awaitingCallsignForLobbyId = lobbyId;
+  const cached = lobbies.find((l) => l.lobbyId === lobbyId);
+  namePromptLobbyNameEl.textContent = cached ? cached.name : "this lobby";
+  joinCallsignInput.value = loadLastCallsign();
+  showScreen("namePrompt");
+}
+
+function render() {
+  const route = parseHash();
+
+  if (currentScreenName === "browse" && route.screen !== "browse") {
+    send({ type: "unwatchLobbies" });
+  }
+
+  if (!registered) {
+    // Identity resolution (the 'hello' round trip) hasn't completed yet —
+    // nothing meaningful to show. render() runs again once 'welcome'
+    // arrives, at which point `location.hash` (unchanged) drives the
+    // actual route — e.g. a direct link to #/lobby/<id> is honoured
+    // without any separate "redirect to home first" step, since joining a
+    // lobby no longer needs anything collected on Home.
+    showScreen("home");
+    currentScreenName = null;
+    return;
+  }
+
+  if (route.screen === "browse") {
+    showScreen("browse");
+    send({ type: "watchLobbies" });
+    renderLobbyList();
+  } else if (route.screen === "lobby") {
+    const lobbyId = /** @type {string} */ (route.lobbyId);
+    if (currentLobby && currentLobby.lobbyId === lobbyId) {
+      awaitingCallsignForLobbyId = null;
+      showScreen("lobby");
+      renderLobbyScreen(currentLobby);
+    } else if (awaitingCallsignForLobbyId === lobbyId) {
+      showNamePrompt(lobbyId);
+    } else {
+      // Not (yet known to be) a member — ask the server. It either resumes
+      // us straight in (already a member, e.g. a reconnect) or replies
+      // `nameRequired` if this is our first time in this lobby.
+      send({ type: "joinLobby", lobbyId });
+      showScreen("lobby");
+    }
+  } else if (route.screen === "options") {
+    showScreen("options");
+  } else {
+    showScreen("home");
+    updateContinueButton();
+  }
+
+  currentScreenName = route.screen;
+}
+
 function handleMessage(/** @type {ServerMessage} */ msg) {
   if (msg.type === "welcome") {
+    registered = true;
     myPlayerId = msg.playerId;
     saveToken(msg.token);
-    renderLobby(msg.lobby);
-    joinScreen.hidden = true;
-    hudScreen.hidden = false;
+    currentLobby = msg.lobby;
     bumpButton.disabled = false;
-    hasJoined = true;
+    // Re-evaluates the current route now that identity (and possibly a
+    // resumed lobby) is known — on a reconnect this just refreshes
+    // currentLobby-derived UI on whatever screen is already showing.
+    render();
   } else if (msg.type === "lobbyState") {
-    renderLobby(msg.lobby);
+    currentLobby = msg.lobby;
+    if (navigateOnNextLobbyState) {
+      navigateOnNextLobbyState = false;
+      location.hash = `#/lobby/${encodeURIComponent(msg.lobby.lobbyId)}`;
+    } else {
+      render();
+    }
+  } else if (msg.type === "lobbyList") {
+    lobbies = msg.lobbies;
+    if (parseHash().screen === "browse") renderLobbyList();
+  } else if (msg.type === "nameRequired") {
+    navigateOnNextLobbyState = false;
+    showNamePrompt(msg.lobbyId);
   } else if (msg.type === "error") {
-    console.error("server error:", msg.message);
+    if (awaitingCallsignForLobbyId) {
+      // Failed after the player chose a callsign (e.g. it was taken, or the
+      // lobby filled/started in the gap) — stay on the prompt and say why.
+      showError(namePromptErrorEl, msg.message);
+    } else {
+      // Failed on a plain join attempt (full/started/gone) — back to
+      // Browse, which is where that attempt was made from.
+      navigateOnNextLobbyState = false;
+      location.hash = "#/browse";
+      showError(browseErrorEl, msg.message);
+    }
   }
 }
 
 function connect() {
-  setStatus(hasJoined ? "disconnected" : "connecting");
+  setStatus(registered ? "disconnected" : "connecting");
   const url = `${location.origin.replace(/^http/, "ws")}/ws`;
   const ws = new WebSocket(url);
   socket = ws;
@@ -107,13 +321,10 @@ function connect() {
   ws.addEventListener("open", () => {
     reconnectAttempt = 0;
     setStatus("connected");
-    // The server resumes identity from the stored token (if any) and
-    // rejects any action before 'hello' (1008), so a reconnect has to
-    // re-announce itself exactly like a first connection would.
-    if (pendingName) {
-      bumpButton.disabled = true;
-      ws.send(JSON.stringify({ type: "hello", name: pendingName, token: loadToken() ?? undefined }));
-    }
+    // The server resolves identity from the stored token (if any) with no
+    // other input needed — a reconnect re-announces itself exactly like a
+    // first connection would.
+    send({ type: "hello", token: loadToken() ?? undefined });
   });
 
   ws.addEventListener("message", (event) => {
@@ -122,7 +333,6 @@ function connect() {
 
   ws.addEventListener("close", () => {
     bumpButton.disabled = true;
-    if (!pendingName) return; // closed before ever joining (e.g. bad name) — don't auto-retry
     setStatus("disconnected");
     const delay = Math.min(1000 * 2 ** reconnectAttempt, 10_000);
     reconnectAttempt += 1;
@@ -130,20 +340,51 @@ function connect() {
   });
 }
 
-joinForm.addEventListener("submit", (event) => {
+continueButton.addEventListener("click", () => {
+  if (currentLobby) location.hash = `#/lobby/${encodeURIComponent(currentLobby.lobbyId)}`;
+});
+
+browseButton.addEventListener("click", () => {
+  location.hash = "#/browse";
+});
+
+optionsButton.addEventListener("click", () => {
+  location.hash = "#/options";
+});
+
+createLobbyForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  const name = nameInput.value.trim();
-  if (!name) return;
-  pendingName = name;
-  if (socket?.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: "hello", name, token: loadToken() ?? undefined }));
-  }
+  clearError(browseErrorEl);
+  const name = lobbyNameInput.value.trim();
+  const capacity = Number(lobbyCapacityInput.value);
+  const callsign = createCallsignInput.value.trim();
+  if (!name || !callsign) return;
+  saveLastCallsign(callsign);
+  navigateOnNextLobbyState = true;
+  send({ type: "createLobby", name, capacity, callsign });
+});
+
+namePromptForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  clearError(namePromptErrorEl);
+  const callsign = joinCallsignInput.value.trim();
+  const lobbyId = awaitingCallsignForLobbyId;
+  if (!callsign || !lobbyId) return;
+  saveLastCallsign(callsign);
+  send({ type: "joinLobby", lobbyId, callsign });
+});
+
+startButton.addEventListener("click", () => {
+  send({ type: "startLobby" });
 });
 
 bumpButton.addEventListener("click", () => {
-  if (socket?.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: "bump" }));
-  }
+  send({ type: "bump" });
 });
 
+window.addEventListener("hashchange", render);
+
+createCallsignInput.value = loadLastCallsign();
+
 connect();
+render();

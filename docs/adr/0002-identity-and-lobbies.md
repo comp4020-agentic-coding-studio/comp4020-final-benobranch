@@ -92,23 +92,65 @@ between — the same reasoning as ADR 0001's `bump` handler. Two players
 racing for the last seat in a lobby resolve consistently rather than both
 succeeding and over-filling it.
 
+### Addendum (ANU-009 follow-up): the callsign is per-lobby, not per-player
+
+The user's intent, once Browse/Create existed to act on: a player's display
+name is **set once, the first time they join a specific lobby, and locked
+for as long as they're a member of it** — not a single name that follows
+them everywhere, the way the original `hello.name` worked.
+
+This meant removing `hello`'s auto-join to `'default'` entirely: `hello`
+now only resolves identity (the token ↔ `playerId` mapping) and returns
+`welcome.lobby: LobbyState | null`. There is nowhere to source a per-lobby
+callsign from until the player has actually chosen a lobby to create or
+join, so a connection can legitimately be "registered but in no lobby yet"
+— a state that didn't exist before this addendum. `ConnMeta.lobbyId` and
+`welcome.lobby` are both nullable as a result.
+
+The callsign itself moved from `players.name` (global, one per identity) to
+`lobby_members.name` (one per membership row) via a `PRAGMA user_version = 3`
+migration: `ALTER TABLE lobby_members ADD COLUMN name`, backfilled from the
+old global name so an in-progress game found on upgrade keeps a readable
+name, then `ALTER TABLE players DROP COLUMN name` since nothing reads it
+anymore. `store.joinLobby()` requires a `callsign` only on a player's first
+join to a *that* lobby (checked via "does a `lobby_members` row for this
+player+lobby already exist", not "is this player new to the app") and
+rejects a duplicate name within the same lobby, case-insensitively — this
+lobby's names are now what satisfies the brief's "the app tells them apart"
+requirement within a game, so two members reading as the same name would
+defeat it. A later `joinLobby`/`createLobby`-triggered re-entry to a lobby
+already joined ignores whatever callsign is sent and keeps the locked one.
+
+**What counts as "a person" is now two layered answers, not one** (the
+brief explicitly leaves this choice open): the device token is who you are
+across the whole app (what makes Continue and cross-reload identity work);
+the per-lobby callsign is who you are *in this one game* (what other
+players in that lobby actually see). `README.md`'s "good" argument should
+describe both halves, not just the token.
+
+A seeded `'default'` lobby still exists (so Server Browse is never empty on
+a fresh boot), but nothing auto-joins it anymore — a brand-new visitor sees
+an empty Home/Continue state until they explicitly create or join a lobby,
+collecting a callsign in the process.
+
 ## Consequences
 
 - `server/protocol.ts`'s message set grew from
   `hello`/`bump`/`welcome`/`counter`/`presence` to include
-  `createLobby`/`joinLobby`/`watchLobbies`/`unwatchLobbies` and
-  `lobbyState`/`lobbyList`/`error`. `PlayerSummary`/`ServerCounterState`/
-  `ServerPresence` were removed in favour of lobby-scoped equivalents
-  (`PlayerPresence`, `LobbyState`, `LobbySummary`) — there is no remaining
-  concept of a single global presence list.
-- `server/store.ts` gained a `PRAGMA user_version`-gated migration, since
-  this is the first schema change after ANU-005's initial `counter` table
-  (now dropped — nothing had been deployed against it).
-- The ANU-007 HUD client was adapted minimally (token storage, rendering
-  `lobby.members` instead of a flat player list) rather than redesigned —
-  the real Home/Server-Browse/HUD screens are ANU-009's job, built on top of
-  this protocol.
-- Capacity is a plain parameter on `createLobby` (2–16), not tied to any
-  particular number — ANU-006 (map/faction work) hadn't landed a faction
-  count at the time this was written, so lobby capacity and "number of
-  factions in a game" are deliberately not coupled yet.
+  `createLobby`/`joinLobby`/`startLobby`/`watchLobbies`/`unwatchLobbies` and
+  `welcome`/`lobbyState`/`lobbyList`/`nameRequired`/`error`.
+  `PlayerSummary`/`ServerCounterState`/`ServerPresence` were removed in
+  favour of lobby-scoped equivalents (`PlayerPresence`, `LobbyState`,
+  `LobbySummary`) — there is no remaining concept of a single global
+  presence list, and (per the addendum above) no remaining concept of a
+  single global player name either.
+- `server/store.ts` gained three `PRAGMA user_version`-gated migrations:
+  v1 replaced ANU-005's `counter` table with `players`/`lobbies`/
+  `lobby_members`; v2 added `lobbies.started`; v3 (the addendum above) moved
+  the callsign from `players.name` to `lobby_members.name`.
+  `hello`/`createLobby`'s capacity validation is `MIN_CAPACITY`/
+  `MAX_CAPACITY` = 4–12 (PLAN.md's settled rule via ANU-006), not the 2–16
+  placeholder this ADR originally shipped with before that rule landed.
+- The ANU-007 HUD client was first adapted minimally for ANU-008, then
+  rebuilt into the real Home/Browse/Lobby/Options screens plus a name-prompt
+  step for ANU-009, on top of this protocol.
