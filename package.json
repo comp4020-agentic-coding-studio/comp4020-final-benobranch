@@ -5,9 +5,13 @@
   "scripts": {
     "prepare": "git rev-parse --git-dir >/dev/null 2>&1 && git config core.hooksPath .githooks || true",
     "typecheck": "tsc --noEmit",
-    "check": "pnpm typecheck && pnpm test",
+    "check": "pnpm typecheck && pnpm check:issues && pnpm test && node scripts/record-check-ok.mjs",
     "check:evidence": "node scripts/check-evidence.ts",
-    "test": "vitest run"
+    "check:issues": "node scripts/check-issues.mjs",
+    "test": "vitest run",
+    "deploy": "node scripts/deploy-guard.mjs",
+    "issue:start": "node scripts/issue-start.mjs",
+    "issue:finish": "node scripts/issue-finish.mjs"
   },
   "devDependencies": {
     "@types/jsdom": "^30.0.0",

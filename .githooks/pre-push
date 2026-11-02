@@ -1,0 +1,102 @@
+#!/bin/sh
+# Keeps `main` green at push time. Note what this is and isn't a guard against:
+# while the repo is private, pushing main deploys nothing (CI only runs once
+# the repo is public). Once public, CI's `deploy` job already `needs: check`,
+# so a red build is stopped there too. What's genuinely unguarded is a manual
+# `flyctl deploy` run from a stray worktree --- see `pnpm run deploy`, which
+# re-checks the same marker before shelling out to flyctl, and don't run
+# flyctl directly. This hook exists so a broken `main` is caught here, by the
+# person who broke it, rather than waiting for CI (or a manual deploy) to
+# surface it later.
+#
+# `pnpm check` (see package.json) writes a per-worktree marker via
+# `scripts/record-check-ok.mjs` after a clean run. This hook refuses to push
+# main unless that marker matches the commit actually being pushed, the tree
+# was clean when it was written, and it's recent enough to still be trusted.
+#
+# Issue files (issues/*.md) are exempt from the marker check: opening or
+# updating an issue shouldn't require booting the whole app first. A push
+# whose main-bound commits touch only issues/ is checked by
+# scripts/check-issues.mjs instead — see that script and docs/issue-tracking.md.
+
+MAX_AGE_SECONDS=14400 # 4 hours
+
+main_local_sha=""
+main_remote_sha=""
+while read -r local_ref local_sha remote_ref remote_sha; do
+	if [ "$remote_ref" = "refs/heads/main" ]; then
+		main_local_sha="$local_sha"
+		main_remote_sha="$remote_sha"
+	fi
+done
+
+if [ -z "$main_local_sha" ]; then
+	exit 0 # not pushing to main
+fi
+
+zero_sha="0000000000000000000000000000000000000000"
+if [ "$main_local_sha" = "$zero_sha" ]; then
+	exit 0 # deleting the ref, nothing to check
+fi
+
+if [ "$main_remote_sha" != "$zero_sha" ] && git rev-parse --verify --quiet "$main_remote_sha" >/dev/null; then
+	changed=$(git diff --name-only "$main_remote_sha" "$main_local_sha")
+else
+	# first push of main, or remote ref not fetched locally: fall back to the
+	# full file list at the commit being pushed rather than guessing a diff
+	changed=$(git show --name-only --format= "$main_local_sha")
+fi
+
+only_issue_files=1
+for f in $changed; do
+	case "$f" in
+	issues/*.md) ;;
+	*)
+		only_issue_files=0
+		break
+		;;
+	esac
+done
+
+if [ -n "$changed" ] && [ "$only_issue_files" -eq 1 ]; then
+	node scripts/check-issues.mjs
+	exit $?
+fi
+
+marker_path=$(git rev-parse --git-path CHECK_OK)
+
+if [ ! -f "$marker_path" ]; then
+	echo "push to main blocked: no record of 'pnpm check' passing in this worktree" >&2
+	echo "run 'pnpm check' and push again (or 'git push --no-verify' to override)" >&2
+	exit 1
+fi
+
+# Marker is small, trusted JSON written by scripts/record-check-ok.mjs; a
+# handful of greps is enough and keeps this hook dependency-free (sh, not
+# node, since hooks run before any toolchain setup).
+marker_sha=$(grep -o '"sha": *"[0-9a-f]*"' "$marker_path" | grep -o '[0-9a-f]\{7,40\}')
+marker_dirty=$(grep -o '"dirty": *[a-z]*' "$marker_path" | grep -o '[a-z]*$')
+marker_checked_at=$(grep -o '"checkedAt": *"[^"]*"' "$marker_path" | sed 's/.*"\([^"]*\)"$/\1/')
+
+if [ "$marker_sha" != "$main_local_sha" ]; then
+	echo "push to main blocked: 'pnpm check' last passed at $marker_sha, but you're pushing $main_local_sha" >&2
+	echo "run 'pnpm check' again against the commit you're pushing" >&2
+	exit 1
+fi
+
+if [ "$marker_dirty" = "true" ]; then
+	echo "push to main blocked: 'pnpm check' last ran with uncommitted changes in the tree" >&2
+	echo "commit everything, then re-run 'pnpm check'" >&2
+	exit 1
+fi
+
+checked_epoch=$(node -e "console.log(Math.floor(new Date(process.argv[1]).getTime() / 1000))" "$marker_checked_at" 2>/dev/null)
+now_epoch=$(date +%s)
+
+if [ -z "$checked_epoch" ] || [ $((now_epoch - checked_epoch)) -gt "$MAX_AGE_SECONDS" ]; then
+	echo "push to main blocked: last passing 'pnpm check' is more than $((MAX_AGE_SECONDS / 3600))h old ($marker_checked_at)" >&2
+	echo "re-run 'pnpm check' to confirm main is still deployable" >&2
+	exit 1
+fi
+
+exit 0
