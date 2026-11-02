@@ -39,3 +39,24 @@ What belongs in *this* file, once the game's rules are settled, is the
 standards derived from `README.md`'s definition of good — what the app must
 never do, what every page must hold to, what a change must not break — not
 the git mechanics, which stay in the referenced doc.
+
+## Cost discipline (temporary, while burning course credit)
+
+Two things that quietly eat agent budget without being required by
+`spec/README.md` or any issue's "done when":
+
+- **No manual end-to-end/browser verification for now.** Don't drive headless
+  Chrome (DevTools Protocol or otherwise) to manually re-prove a feature works
+  before calling an issue done, the way `ANU-007` did. `pnpm check`
+  (typecheck + `spec/*.test.ts` against the running app) is the bar for
+  "done" until this is turned back on. This is a deliberate, temporary
+  loosening for cost reasons, not a claim that e2e checks don't matter — note
+  it in an issue (`type: harness`) and revisit in `PROCESS.md`/a reflection:
+  in a real deployment this verification would run externally (CI, a
+  separate QA pass) against its own budget, not an interactive session's.
+- **Don't read every file under `issues/` at session start.** Read
+  `issues/README.md` once if unfamiliar with the convention, then only the
+  specific `ANU-NNN` issue(s) the session is actually working on (and
+  anything it directly links to via `[[ANU-NNN]]`). Don't survey the whole
+  backlog to "get oriented" — `ls issues/` plus the one issue's frontmatter
+  (`status`, `title`) is enough to confirm it's the right one to pick up.
