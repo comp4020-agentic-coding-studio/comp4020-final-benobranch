@@ -4,15 +4,19 @@
 // bundler for a GUI this small. Typed against server/protocol.ts via JSDoc
 // so `pnpm typecheck` still catches a drifted message shape.
 //
-// Four screens, hash-routed (#/home, #/browse, #/lobby/<id>, #/options) so
-// no server routing changes are needed and a lobby's URL is shareable.
+// Five screens: Home, Browse, Lobby, Options (hash-routed: #/home, #/browse,
+// #/lobby/<id>, #/options — no server routing changes, shareable lobby
+// URLs) plus a non-routed Name prompt shown inline when the server reports
+// `nameRequired` for a lobby this player hasn't joined before (see ADR
+// 0002: identity is a device token, but each lobby locks in its own
+// callsign the first time a player joins it).
 /** @typedef {import("../protocol.ts").ServerMessage} ServerMessage */
 /** @typedef {import("../protocol.ts").PlayerPresence} PlayerPresence */
 /** @typedef {import("../protocol.ts").LobbyState} LobbyState */
 /** @typedef {import("../protocol.ts").LobbySummary} LobbySummary */
 
 const TOKEN_KEY = "infrastructure-siege:token";
-const NAME_KEY = "infrastructure-siege:name";
+const LAST_CALLSIGN_KEY = "infrastructure-siege:last-callsign";
 
 function loadToken() {
   try {
@@ -28,18 +32,18 @@ function saveToken(/** @type {string} */ token) {
     // nothing to do — this session just won't resume next load
   }
 }
-function loadName() {
+function loadLastCallsign() {
   try {
-    return localStorage.getItem(NAME_KEY);
+    return localStorage.getItem(LAST_CALLSIGN_KEY) ?? "";
   } catch {
-    return null;
+    return "";
   }
 }
-function saveName(/** @type {string} */ name) {
+function saveLastCallsign(/** @type {string} */ callsign) {
   try {
-    localStorage.setItem(NAME_KEY, name);
+    localStorage.setItem(LAST_CALLSIGN_KEY, callsign);
   } catch {
-    // nothing to do
+    // purely a convenience prefill — fine to drop
   }
 }
 
@@ -50,21 +54,27 @@ const screens = {
   browse: /** @type {HTMLElement} */ (document.getElementById("browse-screen")),
   lobby: /** @type {HTMLElement} */ (document.getElementById("lobby-screen")),
   options: /** @type {HTMLElement} */ (document.getElementById("options-screen")),
+  namePrompt: /** @type {HTMLElement} */ (document.getElementById("name-prompt-screen")),
 };
 
 // Home
-const callsignInput = /** @type {HTMLInputElement} */ (document.getElementById("callsign"));
 const continueButton = /** @type {HTMLButtonElement} */ (document.getElementById("continue-button"));
 const browseButton = /** @type {HTMLButtonElement} */ (document.getElementById("browse-button"));
 const optionsButton = /** @type {HTMLButtonElement} */ (document.getElementById("options-button"));
-const homeErrorEl = /** @type {HTMLElement} */ (document.getElementById("home-error"));
 
 // Browse
 const lobbyListEl = /** @type {HTMLElement} */ (document.getElementById("lobby-list"));
 const createLobbyForm = /** @type {HTMLFormElement} */ (document.getElementById("create-lobby-form"));
 const lobbyNameInput = /** @type {HTMLInputElement} */ (document.getElementById("lobby-name"));
 const lobbyCapacityInput = /** @type {HTMLInputElement} */ (document.getElementById("lobby-capacity"));
+const createCallsignInput = /** @type {HTMLInputElement} */ (document.getElementById("create-callsign"));
 const browseErrorEl = /** @type {HTMLElement} */ (document.getElementById("browse-error"));
+
+// Name prompt (shown inline when joining a lobby for the first time)
+const namePromptLobbyNameEl = /** @type {HTMLElement} */ (document.getElementById("name-prompt-lobby-name"));
+const namePromptForm = /** @type {HTMLFormElement} */ (document.getElementById("name-prompt-form"));
+const joinCallsignInput = /** @type {HTMLInputElement} */ (document.getElementById("join-callsign"));
+const namePromptErrorEl = /** @type {HTMLElement} */ (document.getElementById("name-prompt-error"));
 
 // Lobby
 const lobbyNameDisplayEl = /** @type {HTMLElement} */ (document.getElementById("lobby-name-display"));
@@ -80,18 +90,25 @@ const playerListEl = /** @type {HTMLElement} */ (document.getElementById("player
 let socket = null;
 let reconnectAttempt = 0;
 
+// True once `welcome` has arrived at least once — the server resolves an
+// identity for every connection automatically (from the stored token, or a
+// fresh one), so there's no user input gating this, unlike a per-lobby
+// callsign.
 let registered = false;
 /** @type {string | null} */
 let myPlayerId = null;
-/** @type {string | null} */
-let myName = null;
 /** @type {LobbyState | null} */
 let currentLobby = null;
 /** @type {LobbySummary[]} */
 let lobbies = [];
-/** @type {string | null} */
-let pendingNavigateTo = null;
 let navigateOnNextLobbyState = false;
+/**
+ * Set when the server has asked for a callsign to join this specific lobby
+ * (first join only) — render() shows the name prompt instead of re-sending
+ * `joinLobby` in a loop while this is set for the current #/lobby/<id>.
+ * @type {string | null}
+ */
+let awaitingCallsignForLobbyId = null;
 /** @type {"home" | "browse" | "lobby" | "options" | null} */
 let currentScreenName = null;
 
@@ -123,8 +140,8 @@ function parseHash() {
   return { screen: "home" };
 }
 
-function showScreen(/** @type {"home" | "browse" | "lobby" | "options"} */ name) {
-  for (const key of /** @type {const} */ (["home", "browse", "lobby", "options"])) {
+function showScreen(/** @type {"home" | "browse" | "lobby" | "options" | "namePrompt"} */ name) {
+  for (const key of /** @type {const} */ (["home", "browse", "lobby", "options", "namePrompt"])) {
     screens[key].hidden = key !== name;
   }
 }
@@ -199,6 +216,14 @@ function renderLobbyScreen(/** @type {LobbyState} */ lobby) {
   );
 }
 
+function showNamePrompt(/** @type {string} */ lobbyId) {
+  awaitingCallsignForLobbyId = lobbyId;
+  const cached = lobbies.find((l) => l.lobbyId === lobbyId);
+  namePromptLobbyNameEl.textContent = cached ? cached.name : "this lobby";
+  joinCallsignInput.value = loadLastCallsign();
+  showScreen("namePrompt");
+}
+
 function render() {
   const route = parseHash();
 
@@ -206,32 +231,36 @@ function render() {
     send({ type: "unwatchLobbies" });
   }
 
+  if (!registered) {
+    // Identity resolution (the 'hello' round trip) hasn't completed yet —
+    // nothing meaningful to show. render() runs again once 'welcome'
+    // arrives, at which point `location.hash` (unchanged) drives the
+    // actual route — e.g. a direct link to #/lobby/<id> is honoured
+    // without any separate "redirect to home first" step, since joining a
+    // lobby no longer needs anything collected on Home.
+    showScreen("home");
+    currentScreenName = null;
+    return;
+  }
+
   if (route.screen === "browse") {
-    if (!registered) {
-      // A returning visitor's `hello` round-trip hasn't resolved yet if
-      // this fires on initial page load (e.g. a bookmarked #/browse URL) —
-      // capture the destination so render() continues here once `welcome`
-      // arrives, same as the shared-lobby-link case below.
-      pendingNavigateTo = location.hash;
-      location.hash = "#/home";
-      return;
-    }
     showScreen("browse");
     send({ type: "watchLobbies" });
     renderLobbyList();
   } else if (route.screen === "lobby") {
-    if (!registered) {
-      // Supports a shared lobby link: capture it, send the visitor to
-      // register on Home first, then rejoin this route once they have.
-      pendingNavigateTo = location.hash;
-      location.hash = "#/home";
-      return;
-    }
-    showScreen("lobby");
-    if (!currentLobby || currentLobby.lobbyId !== route.lobbyId) {
-      send({ type: "joinLobby", lobbyId: route.lobbyId });
-    } else {
+    const lobbyId = /** @type {string} */ (route.lobbyId);
+    if (currentLobby && currentLobby.lobbyId === lobbyId) {
+      awaitingCallsignForLobbyId = null;
+      showScreen("lobby");
       renderLobbyScreen(currentLobby);
+    } else if (awaitingCallsignForLobbyId === lobbyId) {
+      showNamePrompt(lobbyId);
+    } else {
+      // Not (yet known to be) a member — ask the server. It either resumes
+      // us straight in (already a member, e.g. a reconnect) or replies
+      // `nameRequired` if this is our first time in this lobby.
+      send({ type: "joinLobby", lobbyId });
+      showScreen("lobby");
     }
   } else if (route.screen === "options") {
     showScreen("options");
@@ -249,36 +278,37 @@ function handleMessage(/** @type {ServerMessage} */ msg) {
     myPlayerId = msg.playerId;
     saveToken(msg.token);
     currentLobby = msg.lobby;
-    callsignInput.disabled = true;
     bumpButton.disabled = false;
-
-    if (pendingNavigateTo) {
-      const target = pendingNavigateTo;
-      pendingNavigateTo = null;
-      location.hash = target;
-    } else {
-      render();
-    }
+    // Re-evaluates the current route now that identity (and possibly a
+    // resumed lobby) is known — on a reconnect this just refreshes
+    // currentLobby-derived UI on whatever screen is already showing.
+    render();
   } else if (msg.type === "lobbyState") {
     currentLobby = msg.lobby;
     if (navigateOnNextLobbyState) {
       navigateOnNextLobbyState = false;
       location.hash = `#/lobby/${encodeURIComponent(msg.lobby.lobbyId)}`;
     } else {
-      const route = parseHash();
-      if (route.screen === "lobby" && route.lobbyId === msg.lobby.lobbyId) {
-        renderLobbyScreen(msg.lobby);
-      } else if (route.screen === "home") {
-        updateContinueButton();
-      }
+      render();
     }
   } else if (msg.type === "lobbyList") {
     lobbies = msg.lobbies;
     if (parseHash().screen === "browse") renderLobbyList();
-  } else if (msg.type === "error") {
+  } else if (msg.type === "nameRequired") {
     navigateOnNextLobbyState = false;
-    location.hash = "#/browse";
-    showError(browseErrorEl, msg.message);
+    showNamePrompt(msg.lobbyId);
+  } else if (msg.type === "error") {
+    if (awaitingCallsignForLobbyId) {
+      // Failed after the player chose a callsign (e.g. it was taken, or the
+      // lobby filled/started in the gap) — stay on the prompt and say why.
+      showError(namePromptErrorEl, msg.message);
+    } else {
+      // Failed on a plain join attempt (full/started/gone) — back to
+      // Browse, which is where that attempt was made from.
+      navigateOnNextLobbyState = false;
+      location.hash = "#/browse";
+      showError(browseErrorEl, msg.message);
+    }
   }
 }
 
@@ -291,12 +321,10 @@ function connect() {
   ws.addEventListener("open", () => {
     reconnectAttempt = 0;
     setStatus("connected");
-    // The server resumes identity from the stored token (if any) and
-    // rejects any action before 'hello' (1008), so a reconnect has to
-    // re-announce itself exactly like a first connection would.
-    if (myName) {
-      send({ type: "hello", name: myName, token: loadToken() ?? undefined });
-    }
+    // The server resolves identity from the stored token (if any) with no
+    // other input needed — a reconnect re-announces itself exactly like a
+    // first connection would.
+    send({ type: "hello", token: loadToken() ?? undefined });
   });
 
   ws.addEventListener("message", (event) => {
@@ -304,7 +332,7 @@ function connect() {
   });
 
   ws.addEventListener("close", () => {
-    if (!myName) return; // closed before ever registering — don't auto-retry
+    bumpButton.disabled = true;
     setStatus("disconnected");
     const delay = Math.min(1000 * 2 ** reconnectAttempt, 10_000);
     reconnectAttempt += 1;
@@ -312,33 +340,12 @@ function connect() {
   });
 }
 
-function registerWith(/** @type {string} */ name) {
-  myName = name;
-  saveName(name);
-  send({ type: "hello", name, token: loadToken() ?? undefined });
-}
-
 continueButton.addEventListener("click", () => {
   if (currentLobby) location.hash = `#/lobby/${encodeURIComponent(currentLobby.lobbyId)}`;
 });
 
 browseButton.addEventListener("click", () => {
-  clearError(homeErrorEl);
-  if (registered) {
-    location.hash = "#/browse";
-    return;
-  }
-  const name = callsignInput.value.trim();
-  if (!name) {
-    showError(homeErrorEl, "enter a callsign first");
-    return;
-  }
-  // If a shared lobby link sent an unregistered visitor to Home first (see
-  // render()'s "lobby" branch), that link is already waiting in
-  // pendingNavigateTo — registering should return them to it, not silently
-  // reroute to Browse and drop the lobby they actually followed a link to.
-  pendingNavigateTo ??= "#/browse";
-  registerWith(name);
+  location.hash = "#/browse";
 });
 
 optionsButton.addEventListener("click", () => {
@@ -350,9 +357,21 @@ createLobbyForm.addEventListener("submit", (event) => {
   clearError(browseErrorEl);
   const name = lobbyNameInput.value.trim();
   const capacity = Number(lobbyCapacityInput.value);
-  if (!name) return;
+  const callsign = createCallsignInput.value.trim();
+  if (!name || !callsign) return;
+  saveLastCallsign(callsign);
   navigateOnNextLobbyState = true;
-  send({ type: "createLobby", name, capacity });
+  send({ type: "createLobby", name, capacity, callsign });
+});
+
+namePromptForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  clearError(namePromptErrorEl);
+  const callsign = joinCallsignInput.value.trim();
+  const lobbyId = awaitingCallsignForLobbyId;
+  if (!callsign || !lobbyId) return;
+  saveLastCallsign(callsign);
+  send({ type: "joinLobby", lobbyId, callsign });
 });
 
 startButton.addEventListener("click", () => {
@@ -365,14 +384,7 @@ bumpButton.addEventListener("click", () => {
 
 window.addEventListener("hashchange", render);
 
-// A returning visitor (token + name already saved) is silently resumed on
-// load — `welcome`'s lobby then enables Continue via updateContinueButton().
-const storedToken = loadToken();
-const storedName = loadName();
-if (storedToken && storedName) {
-  myName = storedName;
-  callsignInput.value = storedName;
-}
+createCallsignInput.value = loadLastCallsign();
 
 connect();
 render();

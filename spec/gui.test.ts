@@ -17,16 +17,18 @@ it("serves the Home screen's Continue/Server browse/Options controls", async () 
   const { document } = dom.window;
 
   expect(document.querySelector("#home-screen")).not.toBeNull();
-  expect(document.querySelector("#callsign")).not.toBeNull();
   expect(document.querySelector("#continue-button")).not.toBeNull();
   expect(document.querySelector("#browse-button")).not.toBeNull();
   expect(document.querySelector("#options-button")).not.toBeNull();
+  // Names are per-lobby, set the first time a player joins a lobby — Home
+  // itself collects no name (see docs/adr/0002-identity-and-lobbies.md).
+  expect(document.querySelector("#home-screen input")).toBeNull();
   // Exit was deliberately dropped (issues/ANU-008.md's Why section) — there
   // should be no button claiming to do it.
   expect(document.body.textContent).not.toMatch(/\bExit\b/);
 });
 
-it("serves the Browse screen's lobby list and create-lobby form", async () => {
+it("serves the Browse screen's lobby list and create-lobby form, with a callsign field", async () => {
   const res = await fetch(new URL("/", baseUrl));
   const dom = new JSDOM(await res.text());
   const { document } = dom.window;
@@ -34,11 +36,24 @@ it("serves the Browse screen's lobby list and create-lobby form", async () => {
   expect(document.querySelector("#browse-screen")).not.toBeNull();
   expect(document.querySelector("#lobby-list")).not.toBeNull();
   expect(document.querySelector("#create-lobby-form")).not.toBeNull();
+  // Creating a lobby is also this player's first join to it, so it collects
+  // their callsign for that lobby up front.
+  expect(document.querySelector("#create-callsign")).not.toBeNull();
   const capacityInput = document.querySelector("#lobby-capacity");
   expect(capacityInput).not.toBeNull();
   // PLAN.md's settled rule (ANU-006): games are 4-12 players.
   expect(capacityInput?.getAttribute("min")).toBe("4");
   expect(capacityInput?.getAttribute("max")).toBe("12");
+});
+
+it("serves a name-prompt screen for a player's first join to an existing lobby", async () => {
+  const res = await fetch(new URL("/", baseUrl));
+  const dom = new JSDOM(await res.text());
+  const { document } = dom.window;
+
+  expect(document.querySelector("#name-prompt-screen")).not.toBeNull();
+  expect(document.querySelector("#name-prompt-form")).not.toBeNull();
+  expect(document.querySelector("#join-callsign")).not.toBeNull();
 });
 
 it("serves the Lobby screen's status/start/HUD controls", async () => {

@@ -30,17 +30,17 @@ interface Client {
   messages: ServerMessage[];
 }
 
-// `hello` auto-joins 'default' and the server broadcasts THAT lobby's state
-// right after `welcome`, so "the next message after I send X" is not safe to
-// assume is X's result — it races with that broadcast. Collecting all
-// messages and matching by predicate (as realtime.test.ts does) avoids it.
-function connect(baseUrl: string, name: string, token?: string): Promise<Client> {
+// A lobby's own broadcasts (e.g. another connection's hello/close touching
+// the same lobby) can interleave with whatever this client just triggered,
+// so "the next message after I send X" is not safe to assume is X's
+// result. Collecting all messages and matching by predicate avoids it.
+function connect(baseUrl: string, token?: string): Promise<Client> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`${baseUrl.replace(/^http/, "ws")}/ws`);
     const messages: ServerMessage[] = [];
     ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
     ws.on("error", reject);
-    ws.on("open", () => ws.send(JSON.stringify({ type: "hello", name, token })));
+    ws.on("open", () => ws.send(JSON.stringify({ type: "hello", token })));
     const client = { ws, messages };
     waitFor(client, (m) => m.type === "welcome").then(() => resolve(client), reject);
   });
@@ -72,11 +72,12 @@ it("keeps a lobby's state across a real process restart", async () => {
   const first = await spawnServer({ port, dataDir });
   servers.push(first);
 
-  // A fresh, uniquely named lobby, not 'default' — matched by name below so
-  // the assertion can't accidentally pick up default's own broadcasts.
+  // A fresh, uniquely named lobby — matched by name below so the assertion
+  // can't accidentally pick up another test's lobby (spec files can run in
+  // parallel against the same APP_URL elsewhere).
   const lobbyName = `restart-lobby-${Date.now()}`;
-  const creator = await connect(first.baseUrl, "restart-test");
-  send(creator, { type: "createLobby", name: lobbyName, capacity: 4 });
+  const creator = await connect(first.baseUrl);
+  send(creator, { type: "createLobby", name: lobbyName, capacity: 4, callsign: "restart-creator" });
   const created = await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { name: string }).name === lobbyName);
   const lobbyId = (created.lobby as { lobbyId: string }).lobbyId;
 
@@ -91,32 +92,37 @@ it("keeps a lobby's state across a real process restart", async () => {
   const second = await spawnServer({ port, dataDir });
   servers.push(second);
 
-  const reader = await connect(second.baseUrl, "reader");
+  // A brand-new identity (no token) joining this pre-existing lobby for the
+  // first time still needs a callsign — joining doesn't bypass the lock-in
+  // rule just because the lobby itself survived a restart.
+  const reader = await connect(second.baseUrl);
   const readerWelcome = reader.messages.find((m) => m.type === "welcome")!;
+  expect(readerWelcome.lobby, "a fresh identity has no lobby to resume").toBeNull();
 
   send(reader, { type: "joinLobby", lobbyId });
+  const prompt = await waitFor(reader, (m) => m.type === "nameRequired");
+  expect(prompt.lobbyId).toBe(lobbyId);
+
+  send(reader, { type: "joinLobby", lobbyId, callsign: "post-restart-reader" });
   const joined = await waitFor(reader, (m) => m.type === "lobbyState" && (m.lobby as { lobbyId: string }).lobbyId === lobbyId);
   await closeAndWait(reader);
 
-  expect((readerWelcome.lobby as { lobbyId: string }).lobbyId, "a fresh identity still lands in the default lobby").toBe(
-    "default",
-  );
   expect((joined.lobby as { count: number }).count, "the lobby's counter should have survived the restart").toBe(2);
 });
 
-it("resumes the same playerId and lobby via token across a restart", async () => {
+it("resumes the same playerId, lobby, and locked callsign via token across a restart", async () => {
   const tokenTestDataDir = mkdtempSync(join(tmpdir(), "anu008-token-"));
   dataDirs.push(tokenTestDataDir);
   const first = await spawnServer({ port: port + 1, dataDir: tokenTestDataDir });
   servers.push(first);
 
   const lobbyName = `token-lobby-${Date.now()}`;
-  const creator = await connect(first.baseUrl, "token-test");
+  const creator = await connect(first.baseUrl);
   const welcome = creator.messages.find((m) => m.type === "welcome")!;
   const token = welcome.token as string;
   const playerId = welcome.playerId as string;
 
-  send(creator, { type: "createLobby", name: lobbyName, capacity: 4 });
+  send(creator, { type: "createLobby", name: lobbyName, capacity: 4, callsign: "locked-callsign" });
   const created = await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { name: string }).name === lobbyName);
   const lobbyId = (created.lobby as { lobbyId: string }).lobbyId;
 
@@ -126,7 +132,7 @@ it("resumes the same playerId and lobby via token across a restart", async () =>
   const second = await spawnServer({ port: port + 1, dataDir: tokenTestDataDir });
   servers.push(second);
 
-  const resumed = await connect(second.baseUrl, "token-test", token);
+  const resumed = await connect(second.baseUrl, token);
   const resumedWelcome = resumed.messages.find((m) => m.type === "welcome")!;
   await closeAndWait(resumed);
 
@@ -135,4 +141,10 @@ it("resumes the same playerId and lobby via token across a restart", async () =>
     (resumedWelcome.lobby as { lobbyId: string }).lobbyId,
     "the same token should resume the lobby that player was in",
   ).toBe(lobbyId);
+  expect(
+    (resumedWelcome.lobby as { members: { playerId: string; name: string }[] }).members.find(
+      (m) => m.playerId === playerId,
+    )?.name,
+    "the locked-in callsign from before the restart should still be there — this is the 'marker comes back the next day' scenario",
+  ).toBe("locked-callsign");
 });

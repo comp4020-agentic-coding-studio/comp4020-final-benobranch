@@ -14,15 +14,11 @@
         <h1>Infrastructure Siege</h1>
         <p class="tagline">A real-time territory game over real Canberra.</p>
 
-        <label for="callsign">Callsign</label>
-        <input id="callsign" name="callsign" maxlength="40" autocomplete="off" />
-
         <nav class="menu">
           <button id="continue-button" type="button" disabled>Continue</button>
           <button id="browse-button" type="button">Server browse</button>
           <button id="options-button" type="button">Options</button>
         </nav>
-        <p id="home-error" class="error" hidden></p>
 
         <p><a href="/readme/">What this app is for →</a></p>
       </div>
@@ -46,10 +42,29 @@
           <input id="lobby-name" name="lobbyName" maxlength="40" required autocomplete="off" />
           <label for="lobby-capacity">Players (4–12)</label>
           <input id="lobby-capacity" name="lobbyCapacity" type="number" min="4" max="12" value="4" required />
+          <label for="create-callsign">Your callsign in this game</label>
+          <input id="create-callsign" name="createCallsign" maxlength="40" required autocomplete="off" />
           <button type="submit">Create</button>
         </form>
         <p id="browse-error" class="error" hidden></p>
       </section>
+    </main>
+
+    <main id="name-prompt-screen" class="screen" hidden>
+      <div class="panel">
+        <h1>Choose your callsign</h1>
+        <p class="tagline">
+          This is your name in <strong id="name-prompt-lobby-name">this lobby</strong> — it's locked in once you
+          join, for the rest of the game.
+        </p>
+        <form id="name-prompt-form">
+          <label for="join-callsign">Callsign</label>
+          <input id="join-callsign" name="joinCallsign" maxlength="40" required autocomplete="off" />
+          <button type="submit">Join</button>
+        </form>
+        <p id="name-prompt-error" class="error" hidden></p>
+        <p><a href="#/browse" class="back-link">← Back to browse</a></p>
+      </div>
     </main>
 
     <main id="lobby-screen" class="screen" hidden>

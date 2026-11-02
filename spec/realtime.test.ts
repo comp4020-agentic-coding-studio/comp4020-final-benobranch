@@ -9,6 +9,11 @@
 // run spec files in parallel against the shared APP_URL server, so sharing
 // a lobby across tests (or files) would make assertions about member/count
 // flaky depending on run order.
+//
+// Identity ('hello') and a lobby's callsign are separate: 'hello' takes no
+// name and never auto-joins a lobby (see docs/adr/0002-identity-and-lobbies.md's
+// "per-lobby callsign" addendum) — a callsign is only sent on the first
+// createLobby/joinLobby for a given lobby, then locked.
 import { expect, inject, it } from "vitest";
 import WebSocket from "ws";
 
@@ -25,14 +30,14 @@ interface Client {
   messages: ServerMessage[];
 }
 
-function connect(name: string): Promise<Client> {
+function connect(): Promise<Client> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(wsUrl);
     const messages: ServerMessage[] = [];
     socket.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
     socket.on("error", reject);
     socket.on("open", () => {
-      socket.send(JSON.stringify({ type: "hello", name }));
+      socket.send(JSON.stringify({ type: "hello" }));
       resolve({ socket, messages });
     });
   });
@@ -61,25 +66,35 @@ function lobbyStateMessages(client: Client, lobbyId: string): ServerMessage[] {
   );
 }
 
+/** Connects, registers, and creates+joins a fresh lobby in one step. */
+async function connectAndCreateLobby(
+  lobbyName: string,
+  callsign: string,
+  capacity = 4,
+): Promise<{ client: Client; lobbyId: string }> {
+  const client = await connect();
+  await waitFor(client, (m) => m.type === "welcome");
+  send(client, { type: "createLobby", name: lobbyName, capacity, callsign });
+  const created = await waitFor(client, (m) => m.type === "lobbyState" && (m.lobby as { name: string }).name === lobbyName);
+  return { client, lobbyId: (created.lobby as { lobbyId: string }).lobbyId };
+}
+
+/** Connects, registers, and joins an existing lobby with a callsign. */
+async function connectAndJoinLobby(lobbyId: string, callsign: string): Promise<Client> {
+  const client = await connect();
+  await waitFor(client, (m) => m.type === "welcome");
+  send(client, { type: "joinLobby", lobbyId, callsign });
+  await waitFor(client, (m) => m.type === "lobbyState" && (m.lobby as { lobbyId: string }).lobbyId === lobbyId);
+  return client;
+}
+
 it("broadcasts one connection's action to several others in the same lobby within ~1s", async () => {
   const N = 5;
-  const lobbyName = `realtime-test-${Date.now()}`;
-  const creator = await connect("realtime-creator");
-  send(creator, { type: "createLobby", name: lobbyName, capacity: N + 1 });
-  // 'hello' auto-joins 'default' and broadcasts that lobbyState too (to every
-  // socket in it, including the sender), so the first lobbyState a newly
-  // connected client sees may be for 'default', not the lobby just created —
-  // match on the lobby's name, not "first lobbyState seen", to avoid it.
-  const created = await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { name: string }).name === lobbyName);
-  const lobbyId = (created.lobby as { lobbyId: string }).lobbyId;
+  const { client: creator, lobbyId } = await connectAndCreateLobby(`realtime-test-${Date.now()}`, "creator", N + 1);
 
   const joiners = await Promise.all(
-    Array.from({ length: N - 1 }, (_, i) => connect(`realtime-joiner-${i}`)),
+    Array.from({ length: N - 1 }, (_, i) => connectAndJoinLobby(lobbyId, `joiner-${i}`)),
   );
-  for (const joiner of joiners) {
-    send(joiner, { type: "joinLobby", lobbyId });
-    await waitFor(joiner, (m) => m.type === "lobbyState" && (m.lobby as { lobbyId: string }).lobbyId === lobbyId);
-  }
   const clients = [creator, ...joiners];
 
   const before = clients.map((c) => lobbyStateMessages(c, lobbyId).length);
@@ -100,17 +115,8 @@ it("broadcasts one connection's action to several others in the same lobby withi
 });
 
 it("does not broadcast a lobby's state to a connection in a different lobby", async () => {
-  const lobbyAName = `isolation-a-${Date.now()}`;
-  const lobbyBName = `isolation-b-${Date.now()}`;
-
-  const inLobbyA = await connect("isolation-a");
-  send(inLobbyA, { type: "createLobby", name: lobbyAName, capacity: 4 });
-  const aState = await waitFor(inLobbyA, (m) => m.type === "lobbyState" && (m.lobby as { name: string }).name === lobbyAName);
-  const lobbyAId = (aState.lobby as { lobbyId: string }).lobbyId;
-
-  const inLobbyB = await connect("isolation-b");
-  send(inLobbyB, { type: "createLobby", name: lobbyBName, capacity: 4 });
-  await waitFor(inLobbyB, (m) => m.type === "lobbyState" && (m.lobby as { name: string }).name === lobbyBName);
+  const { client: inLobbyA, lobbyId: lobbyAId } = await connectAndCreateLobby(`isolation-a-${Date.now()}`, "alice");
+  const { client: inLobbyB } = await connectAndCreateLobby(`isolation-b-${Date.now()}`, "bob");
 
   send(inLobbyA, { type: "bump" });
   await new Promise((r) => setTimeout(r, 500));
@@ -123,9 +129,9 @@ it("does not broadcast a lobby's state to a connection in a different lobby", as
 });
 
 it("rejects a lobby capacity outside PLAN.md's settled 4-12 range", async () => {
-  const client = await connect("capacity-test");
+  const client = await connect();
   await waitFor(client, (m) => m.type === "welcome");
-  send(client, { type: "createLobby", name: `too-small-${Date.now()}`, capacity: 3 });
+  send(client, { type: "createLobby", name: `too-small-${Date.now()}`, capacity: 3, callsign: "x" });
   await new Promise((resolve) => client.socket.once("close", resolve));
   expect(client.socket.readyState, "a capacity below 4 should close the connection (bad message)").toBe(
     client.socket.CLOSED,
@@ -133,18 +139,14 @@ it("rejects a lobby capacity outside PLAN.md's settled 4-12 range", async () => 
 });
 
 it("refuses a new member once a lobby has started (no late join)", async () => {
-  const lobbyName = `no-late-join-${Date.now()}`;
-  const creator = await connect("no-late-join-creator");
-  send(creator, { type: "createLobby", name: lobbyName, capacity: 4 });
-  const created = await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { name: string }).name === lobbyName);
-  const lobbyId = (created.lobby as { lobbyId: string }).lobbyId;
+  const { client: creator, lobbyId } = await connectAndCreateLobby(`no-late-join-${Date.now()}`, "creator");
 
   send(creator, { type: "startLobby" });
   await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { lobbyId: string; started: boolean }).lobbyId === lobbyId && (m.lobby as { started: boolean }).started);
 
-  const latecomer = await connect("late-joiner");
+  const latecomer = await connect();
   await waitFor(latecomer, (m) => m.type === "welcome");
-  send(latecomer, { type: "joinLobby", lobbyId });
+  send(latecomer, { type: "joinLobby", lobbyId, callsign: "latecomer" });
   const error = await waitFor(latecomer, (m) => m.type === "error");
   expect((error.message as string).toLowerCase()).toContain("started");
 
@@ -152,16 +154,62 @@ it("refuses a new member once a lobby has started (no late join)", async () => {
   latecomer.socket.close();
 });
 
+it("requires a callsign only on a player's first join to a lobby", async () => {
+  const { client: creator, lobbyId } = await connectAndCreateLobby(`name-required-${Date.now()}`, "creator");
+
+  const joiner = await connect();
+  await waitFor(joiner, (m) => m.type === "welcome");
+  send(joiner, { type: "joinLobby", lobbyId }); // no callsign
+  const prompt = await waitFor(joiner, (m) => m.type === "nameRequired");
+  expect(prompt.lobbyId).toBe(lobbyId);
+
+  // Retrying with a callsign succeeds.
+  send(joiner, { type: "joinLobby", lobbyId, callsign: "newcomer" });
+  const state = await waitFor(joiner, (m) => m.type === "lobbyState" && (m.lobby as { lobbyId: string }).lobbyId === lobbyId);
+  expect((state.lobby as { members: { name: string }[] }).members.some((m) => m.name === "newcomer")).toBe(true);
+
+  creator.socket.close();
+  joiner.socket.close();
+});
+
+it("locks a player's callsign in a lobby after their first join", async () => {
+  const { client: creator, lobbyId } = await connectAndCreateLobby(`locked-name-${Date.now()}`, "original-name");
+
+  // Re-joining (e.g. after a reconnect) with a different callsign doesn't
+  // change the locked-in name.
+  send(creator, { type: "joinLobby", lobbyId, callsign: "different-name" });
+  await new Promise((r) => setTimeout(r, 300));
+
+  const latest = lobbyStateMessages(creator, lobbyId).at(-1)!;
+  const members = (latest.lobby as { members: { name: string }[] }).members;
+  expect(members.some((m) => m.name === "original-name")).toBe(true);
+  expect(members.some((m) => m.name === "different-name")).toBe(false);
+
+  creator.socket.close();
+});
+
+it("rejects a duplicate callsign within the same lobby", async () => {
+  const { client: creator, lobbyId } = await connectAndCreateLobby(`dup-name-${Date.now()}`, "taken");
+
+  const joiner = await connect();
+  await waitFor(joiner, (m) => m.type === "welcome");
+  send(joiner, { type: "joinLobby", lobbyId, callsign: "taken" });
+  const error = await waitFor(joiner, (m) => m.type === "error");
+  expect(error.message).toMatch(/taken/i);
+
+  creator.socket.close();
+  joiner.socket.close();
+});
+
 it("updates a watching connection's lobby list when a new lobby is created", async () => {
-  const watcher = await connect("list-watcher");
+  const watcher = await connect();
+  await waitFor(watcher, (m) => m.type === "welcome");
   send(watcher, { type: "watchLobbies" });
   await waitFor(watcher, (m) => m.type === "lobbyList");
   const before = watcher.messages.filter((m) => m.type === "lobbyList").length;
 
   const creatorName = `list-test-${Date.now()}`;
-  const creator = await connect("list-creator");
-  send(creator, { type: "createLobby", name: creatorName, capacity: 4 });
-  await waitFor(creator, (m) => m.type === "lobbyState");
+  const { client: creator } = await connectAndCreateLobby(creatorName, "creator");
 
   const listUpdate = await waitFor(
     watcher,
