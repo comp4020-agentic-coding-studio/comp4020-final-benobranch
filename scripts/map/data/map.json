@@ -1,0 +1,2826 @@
+{
+  "source_attribution": {
+    "suburbs": "ABS ASGS Edition 3 (2021) Suburbs and Localities (SAL), CC BY 4.0, https://geo.abs.gov.au/arcgis/rest/services/ASGS2021/SAL/MapServer",
+    "roads": "OpenStreetMap contributors, ODbL, via Overpass API"
+  },
+  "suburbs": [
+    {
+      "idx": 0,
+      "sal_code": "80001-0",
+      "name": "ACT Remainder - Belconnen [part 0]",
+      "is_remainder": true
+    },
+    {
+      "idx": 1,
+      "sal_code": "80001-1",
+      "name": "ACT Remainder - Belconnen [part 1]",
+      "is_remainder": true
+    },
+    {
+      "idx": 2,
+      "sal_code": "80001-2",
+      "name": "ACT Remainder - Belconnen [part 2]",
+      "is_remainder": true
+    },
+    {
+      "idx": 3,
+      "sal_code": "80002",
+      "name": "ACT Remainder - Booth",
+      "is_remainder": true
+    },
+    {
+      "idx": 4,
+      "sal_code": "80003",
+      "name": "ACT Remainder - Canberra Central",
+      "is_remainder": true
+    },
+    {
+      "idx": 5,
+      "sal_code": "80004",
+      "name": "ACT Remainder - Coree",
+      "is_remainder": true
+    },
+    {
+      "idx": 6,
+      "sal_code": "80005",
+      "name": "ACT Remainder - Cotter River",
+      "is_remainder": true
+    },
+    {
+      "idx": 7,
+      "sal_code": "80006-0",
+      "name": "ACT Remainder - Gungahlin [part 0]",
+      "is_remainder": true
+    },
+    {
+      "idx": 8,
+      "sal_code": "80006-1",
+      "name": "ACT Remainder - Gungahlin [part 1]",
+      "is_remainder": true
+    },
+    {
+      "idx": 9,
+      "sal_code": "80007",
+      "name": "ACT Remainder - Hall",
+      "is_remainder": true
+    },
+    {
+      "idx": 10,
+      "sal_code": "80008",
+      "name": "ACT Remainder - Jerrabomberra",
+      "is_remainder": true
+    },
+    {
+      "idx": 11,
+      "sal_code": "80009",
+      "name": "ACT Remainder - Kowen",
+      "is_remainder": true
+    },
+    {
+      "idx": 12,
+      "sal_code": "80010",
+      "name": "ACT Remainder - Majura",
+      "is_remainder": true
+    },
+    {
+      "idx": 13,
+      "sal_code": "80011",
+      "name": "ACT Remainder - Molonglo Valley",
+      "is_remainder": true
+    },
+    {
+      "idx": 14,
+      "sal_code": "80012",
+      "name": "ACT Remainder - Paddys River",
+      "is_remainder": true
+    },
+    {
+      "idx": 15,
+      "sal_code": "80013",
+      "name": "ACT Remainder - Rendezvous Creek",
+      "is_remainder": true
+    },
+    {
+      "idx": 16,
+      "sal_code": "80014",
+      "name": "ACT Remainder - Stromlo",
+      "is_remainder": true
+    },
+    {
+      "idx": 17,
+      "sal_code": "80015",
+      "name": "ACT Remainder - Tuggeranong",
+      "is_remainder": true
+    },
+    {
+      "idx": 18,
+      "sal_code": "80016",
+      "name": "ACT Remainder - Weston Creek",
+      "is_remainder": true
+    },
+    {
+      "idx": 19,
+      "sal_code": "80017",
+      "name": "Acton (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 20,
+      "sal_code": "80018",
+      "name": "Ainslie",
+      "is_remainder": false
+    },
+    {
+      "idx": 21,
+      "sal_code": "80019",
+      "name": "Amaroo (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 22,
+      "sal_code": "80020",
+      "name": "Aranda",
+      "is_remainder": false
+    },
+    {
+      "idx": 23,
+      "sal_code": "80021",
+      "name": "Banks",
+      "is_remainder": false
+    },
+    {
+      "idx": 24,
+      "sal_code": "80022",
+      "name": "Barton",
+      "is_remainder": false
+    },
+    {
+      "idx": 25,
+      "sal_code": "80023",
+      "name": "Beard",
+      "is_remainder": false
+    },
+    {
+      "idx": 26,
+      "sal_code": "80024",
+      "name": "Belconnen",
+      "is_remainder": false
+    },
+    {
+      "idx": 27,
+      "sal_code": "80025",
+      "name": "Bonner",
+      "is_remainder": false
+    },
+    {
+      "idx": 28,
+      "sal_code": "80026",
+      "name": "Bonython",
+      "is_remainder": false
+    },
+    {
+      "idx": 29,
+      "sal_code": "80027",
+      "name": "Braddon",
+      "is_remainder": false
+    },
+    {
+      "idx": 30,
+      "sal_code": "80028",
+      "name": "Bruce (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 31,
+      "sal_code": "80029",
+      "name": "Calwell",
+      "is_remainder": false
+    },
+    {
+      "idx": 32,
+      "sal_code": "80030",
+      "name": "Campbell",
+      "is_remainder": false
+    },
+    {
+      "idx": 33,
+      "sal_code": "80031",
+      "name": "Canberra Airport",
+      "is_remainder": false
+    },
+    {
+      "idx": 34,
+      "sal_code": "80032",
+      "name": "Capital Hill",
+      "is_remainder": false
+    },
+    {
+      "idx": 35,
+      "sal_code": "80033",
+      "name": "Casey",
+      "is_remainder": false
+    },
+    {
+      "idx": 36,
+      "sal_code": "80034",
+      "name": "Chapman",
+      "is_remainder": false
+    },
+    {
+      "idx": 37,
+      "sal_code": "80035",
+      "name": "Charnwood",
+      "is_remainder": false
+    },
+    {
+      "idx": 38,
+      "sal_code": "80036",
+      "name": "Chifley (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 39,
+      "sal_code": "80037",
+      "name": "Chisholm (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 40,
+      "sal_code": "80038",
+      "name": "City",
+      "is_remainder": false
+    },
+    {
+      "idx": 41,
+      "sal_code": "80039",
+      "name": "Conder",
+      "is_remainder": false
+    },
+    {
+      "idx": 42,
+      "sal_code": "80040",
+      "name": "Cook",
+      "is_remainder": false
+    },
+    {
+      "idx": 43,
+      "sal_code": "80041",
+      "name": "Coombs",
+      "is_remainder": false
+    },
+    {
+      "idx": 44,
+      "sal_code": "80042",
+      "name": "Crace",
+      "is_remainder": false
+    },
+    {
+      "idx": 45,
+      "sal_code": "80043",
+      "name": "Curtin",
+      "is_remainder": false
+    },
+    {
+      "idx": 46,
+      "sal_code": "80044",
+      "name": "Deakin",
+      "is_remainder": false
+    },
+    {
+      "idx": 47,
+      "sal_code": "80045",
+      "name": "Denman Prospect",
+      "is_remainder": false
+    },
+    {
+      "idx": 48,
+      "sal_code": "80046",
+      "name": "Dickson",
+      "is_remainder": false
+    },
+    {
+      "idx": 49,
+      "sal_code": "80047",
+      "name": "Downer",
+      "is_remainder": false
+    },
+    {
+      "idx": 50,
+      "sal_code": "80048",
+      "name": "Duffy",
+      "is_remainder": false
+    },
+    {
+      "idx": 51,
+      "sal_code": "80049",
+      "name": "Dunlop",
+      "is_remainder": false
+    },
+    {
+      "idx": 52,
+      "sal_code": "80050",
+      "name": "Evatt",
+      "is_remainder": false
+    },
+    {
+      "idx": 53,
+      "sal_code": "80051",
+      "name": "Fadden",
+      "is_remainder": false
+    },
+    {
+      "idx": 54,
+      "sal_code": "80052",
+      "name": "Farrer",
+      "is_remainder": false
+    },
+    {
+      "idx": 55,
+      "sal_code": "80053",
+      "name": "Fisher (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 56,
+      "sal_code": "80054",
+      "name": "Florey",
+      "is_remainder": false
+    },
+    {
+      "idx": 57,
+      "sal_code": "80055",
+      "name": "Flynn (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 58,
+      "sal_code": "80056",
+      "name": "Forde",
+      "is_remainder": false
+    },
+    {
+      "idx": 59,
+      "sal_code": "80057",
+      "name": "Forrest (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 60,
+      "sal_code": "80058",
+      "name": "Franklin (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 61,
+      "sal_code": "80059",
+      "name": "Fraser",
+      "is_remainder": false
+    },
+    {
+      "idx": 62,
+      "sal_code": "80060",
+      "name": "Fyshwick",
+      "is_remainder": false
+    },
+    {
+      "idx": 63,
+      "sal_code": "80061",
+      "name": "Garran",
+      "is_remainder": false
+    },
+    {
+      "idx": 64,
+      "sal_code": "80062",
+      "name": "Gilmore (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 65,
+      "sal_code": "80063",
+      "name": "Giralang",
+      "is_remainder": false
+    },
+    {
+      "idx": 66,
+      "sal_code": "80064",
+      "name": "Gordon (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 67,
+      "sal_code": "80065",
+      "name": "Gowrie (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 68,
+      "sal_code": "80066",
+      "name": "Greenway",
+      "is_remainder": false
+    },
+    {
+      "idx": 69,
+      "sal_code": "80067",
+      "name": "Griffith (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 70,
+      "sal_code": "80068",
+      "name": "Gungahlin",
+      "is_remainder": false
+    },
+    {
+      "idx": 71,
+      "sal_code": "80069",
+      "name": "Hackett",
+      "is_remainder": false
+    },
+    {
+      "idx": 72,
+      "sal_code": "80070",
+      "name": "Hall",
+      "is_remainder": false
+    },
+    {
+      "idx": 73,
+      "sal_code": "80071",
+      "name": "Harrison",
+      "is_remainder": false
+    },
+    {
+      "idx": 74,
+      "sal_code": "80072",
+      "name": "Hawker (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 75,
+      "sal_code": "80073",
+      "name": "Higgins",
+      "is_remainder": false
+    },
+    {
+      "idx": 76,
+      "sal_code": "80074",
+      "name": "Holder (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 77,
+      "sal_code": "80075",
+      "name": "Holt",
+      "is_remainder": false
+    },
+    {
+      "idx": 78,
+      "sal_code": "80076",
+      "name": "Hughes (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 79,
+      "sal_code": "80077",
+      "name": "Hume",
+      "is_remainder": false
+    },
+    {
+      "idx": 80,
+      "sal_code": "80078",
+      "name": "Isaacs",
+      "is_remainder": false
+    },
+    {
+      "idx": 81,
+      "sal_code": "80079",
+      "name": "Isabella Plains",
+      "is_remainder": false
+    },
+    {
+      "idx": 82,
+      "sal_code": "80080",
+      "name": "Jacka",
+      "is_remainder": false
+    },
+    {
+      "idx": 83,
+      "sal_code": "80081",
+      "name": "Kaleen",
+      "is_remainder": false
+    },
+    {
+      "idx": 84,
+      "sal_code": "80082",
+      "name": "Kambah",
+      "is_remainder": false
+    },
+    {
+      "idx": 85,
+      "sal_code": "80083",
+      "name": "Kingston (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 86,
+      "sal_code": "80084",
+      "name": "Latham (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 87,
+      "sal_code": "80085",
+      "name": "Lawson (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 88,
+      "sal_code": "80086",
+      "name": "Lyneham",
+      "is_remainder": false
+    },
+    {
+      "idx": 89,
+      "sal_code": "80087",
+      "name": "Lyons (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 90,
+      "sal_code": "80088",
+      "name": "Macarthur (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 91,
+      "sal_code": "80089",
+      "name": "Macgregor (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 92,
+      "sal_code": "80090",
+      "name": "Macnamara",
+      "is_remainder": false
+    },
+    {
+      "idx": 93,
+      "sal_code": "80091",
+      "name": "Macquarie",
+      "is_remainder": false
+    },
+    {
+      "idx": 94,
+      "sal_code": "80092",
+      "name": "Mawson",
+      "is_remainder": false
+    },
+    {
+      "idx": 95,
+      "sal_code": "80093",
+      "name": "McKellar",
+      "is_remainder": false
+    },
+    {
+      "idx": 96,
+      "sal_code": "80094",
+      "name": "Melba",
+      "is_remainder": false
+    },
+    {
+      "idx": 97,
+      "sal_code": "80095",
+      "name": "Mitchell (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 98,
+      "sal_code": "80096",
+      "name": "Molonglo",
+      "is_remainder": false
+    },
+    {
+      "idx": 99,
+      "sal_code": "80097",
+      "name": "Monash (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 100,
+      "sal_code": "80098",
+      "name": "Moncrieff",
+      "is_remainder": false
+    },
+    {
+      "idx": 101,
+      "sal_code": "80099",
+      "name": "Narrabundah",
+      "is_remainder": false
+    },
+    {
+      "idx": 102,
+      "sal_code": "80100",
+      "name": "Ngunnawal",
+      "is_remainder": false
+    },
+    {
+      "idx": 103,
+      "sal_code": "80101",
+      "name": "Nicholls",
+      "is_remainder": false
+    },
+    {
+      "idx": 104,
+      "sal_code": "80102",
+      "name": "O'Connor (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 105,
+      "sal_code": "80103",
+      "name": "O'Malley",
+      "is_remainder": false
+    },
+    {
+      "idx": 106,
+      "sal_code": "80104",
+      "name": "Oaks Estate",
+      "is_remainder": false
+    },
+    {
+      "idx": 107,
+      "sal_code": "80105",
+      "name": "Oxley (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 108,
+      "sal_code": "80106",
+      "name": "Page",
+      "is_remainder": false
+    },
+    {
+      "idx": 109,
+      "sal_code": "80107",
+      "name": "Palmerston (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 110,
+      "sal_code": "80108",
+      "name": "Parkes (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 111,
+      "sal_code": "80109",
+      "name": "Pearce",
+      "is_remainder": false
+    },
+    {
+      "idx": 112,
+      "sal_code": "80110",
+      "name": "Phillip",
+      "is_remainder": false
+    },
+    {
+      "idx": 113,
+      "sal_code": "80111",
+      "name": "Pialligo",
+      "is_remainder": false
+    },
+    {
+      "idx": 114,
+      "sal_code": "80112",
+      "name": "Red Hill (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 115,
+      "sal_code": "80113",
+      "name": "Reid (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 116,
+      "sal_code": "80114",
+      "name": "Richardson",
+      "is_remainder": false
+    },
+    {
+      "idx": 117,
+      "sal_code": "80115",
+      "name": "Rivett",
+      "is_remainder": false
+    },
+    {
+      "idx": 118,
+      "sal_code": "80116",
+      "name": "Russell",
+      "is_remainder": false
+    },
+    {
+      "idx": 119,
+      "sal_code": "80117",
+      "name": "Scullin",
+      "is_remainder": false
+    },
+    {
+      "idx": 120,
+      "sal_code": "80118",
+      "name": "Spence (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 121,
+      "sal_code": "80119",
+      "name": "Stirling (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 122,
+      "sal_code": "80120",
+      "name": "Strathnairn",
+      "is_remainder": false
+    },
+    {
+      "idx": 123,
+      "sal_code": "80121",
+      "name": "Symonston",
+      "is_remainder": false
+    },
+    {
+      "idx": 124,
+      "sal_code": "80122",
+      "name": "Taylor",
+      "is_remainder": false
+    },
+    {
+      "idx": 125,
+      "sal_code": "80123",
+      "name": "Tharwa",
+      "is_remainder": false
+    },
+    {
+      "idx": 126,
+      "sal_code": "80124",
+      "name": "Theodore (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 127,
+      "sal_code": "80125",
+      "name": "Throsby",
+      "is_remainder": false
+    },
+    {
+      "idx": 128,
+      "sal_code": "80126",
+      "name": "Torrens",
+      "is_remainder": false
+    },
+    {
+      "idx": 129,
+      "sal_code": "80127",
+      "name": "Turner",
+      "is_remainder": false
+    },
+    {
+      "idx": 130,
+      "sal_code": "80128",
+      "name": "Uriarra Village",
+      "is_remainder": false
+    },
+    {
+      "idx": 131,
+      "sal_code": "80129",
+      "name": "Wanniassa",
+      "is_remainder": false
+    },
+    {
+      "idx": 132,
+      "sal_code": "80130",
+      "name": "Waramanga",
+      "is_remainder": false
+    },
+    {
+      "idx": 133,
+      "sal_code": "80131",
+      "name": "Watson",
+      "is_remainder": false
+    },
+    {
+      "idx": 134,
+      "sal_code": "80132",
+      "name": "Weetangera",
+      "is_remainder": false
+    },
+    {
+      "idx": 135,
+      "sal_code": "80133",
+      "name": "Weston (ACT)",
+      "is_remainder": false
+    },
+    {
+      "idx": 136,
+      "sal_code": "80134",
+      "name": "Whitlam",
+      "is_remainder": false
+    },
+    {
+      "idx": 137,
+      "sal_code": "80135",
+      "name": "Wright",
+      "is_remainder": false
+    },
+    {
+      "idx": 138,
+      "sal_code": "80136",
+      "name": "Yarralumla",
+      "is_remainder": false
+    }
+  ],
+  "edges": [
+    {
+      "a": 0,
+      "b": 122,
+      "weight": 19
+    },
+    {
+      "a": 0,
+      "b": 13,
+      "weight": 16
+    },
+    {
+      "a": 0,
+      "b": 74,
+      "weight": 4
+    },
+    {
+      "a": 0,
+      "b": 77,
+      "weight": 12
+    },
+    {
+      "a": 0,
+      "b": 75,
+      "weight": 5
+    },
+    {
+      "a": 0,
+      "b": 4,
+      "weight": 21
+    },
+    {
+      "a": 0,
+      "b": 42,
+      "weight": 5
+    },
+    {
+      "a": 0,
+      "b": 134,
+      "weight": 6
+    },
+    {
+      "a": 0,
+      "b": 136,
+      "weight": 12
+    },
+    {
+      "a": 0,
+      "b": 22,
+      "weight": 1
+    },
+    {
+      "a": 1,
+      "b": 92,
+      "weight": 1
+    },
+    {
+      "a": 1,
+      "b": 91,
+      "weight": 1
+    },
+    {
+      "a": 2,
+      "b": 103,
+      "weight": 5
+    },
+    {
+      "a": 2,
+      "b": 65,
+      "weight": 7
+    },
+    {
+      "a": 2,
+      "b": 95,
+      "weight": 4
+    },
+    {
+      "a": 2,
+      "b": 72,
+      "weight": 8
+    },
+    {
+      "a": 2,
+      "b": 51,
+      "weight": 8
+    },
+    {
+      "a": 2,
+      "b": 120,
+      "weight": 10
+    },
+    {
+      "a": 2,
+      "b": 52,
+      "weight": 28
+    },
+    {
+      "a": 2,
+      "b": 9,
+      "weight": 3
+    },
+    {
+      "a": 2,
+      "b": 61,
+      "weight": 1
+    },
+    {
+      "a": 2,
+      "b": 7,
+      "weight": 3
+    },
+    {
+      "a": 3,
+      "b": 17,
+      "weight": 1
+    },
+    {
+      "a": 3,
+      "b": 15,
+      "weight": 9
+    },
+    {
+      "a": 3,
+      "b": 125,
+      "weight": 1
+    },
+    {
+      "a": 4,
+      "b": 19,
+      "weight": 22
+    },
+    {
+      "a": 4,
+      "b": 22,
+      "weight": 5
+    },
+    {
+      "a": 4,
+      "b": 30,
+      "weight": 5
+    },
+    {
+      "a": 4,
+      "b": 13,
+      "weight": 24
+    },
+    {
+      "a": 4,
+      "b": 104,
+      "weight": 4
+    },
+    {
+      "a": 5,
+      "b": 16,
+      "weight": 2
+    },
+    {
+      "a": 5,
+      "b": 6,
+      "weight": 3
+    },
+    {
+      "a": 5,
+      "b": 130,
+      "weight": 2
+    },
+    {
+      "a": 6,
+      "b": 14,
+      "weight": 6
+    },
+    {
+      "a": 7,
+      "b": 97,
+      "weight": 9
+    },
+    {
+      "a": 7,
+      "b": 133,
+      "weight": 7
+    },
+    {
+      "a": 7,
+      "b": 58,
+      "weight": 2
+    },
+    {
+      "a": 7,
+      "b": 72,
+      "weight": 6
+    },
+    {
+      "a": 7,
+      "b": 73,
+      "weight": 27
+    },
+    {
+      "a": 7,
+      "b": 12,
+      "weight": 6
+    },
+    {
+      "a": 7,
+      "b": 103,
+      "weight": 3
+    },
+    {
+      "a": 7,
+      "b": 127,
+      "weight": 6
+    },
+    {
+      "a": 7,
+      "b": 88,
+      "weight": 2
+    },
+    {
+      "a": 8,
+      "b": 97,
+      "weight": 4
+    },
+    {
+      "a": 8,
+      "b": 83,
+      "weight": 10
+    },
+    {
+      "a": 8,
+      "b": 109,
+      "weight": 1
+    },
+    {
+      "a": 8,
+      "b": 60,
+      "weight": 1
+    },
+    {
+      "a": 8,
+      "b": 44,
+      "weight": 1
+    },
+    {
+      "a": 9,
+      "b": 72,
+      "weight": 10
+    },
+    {
+      "a": 10,
+      "b": 25,
+      "weight": 4
+    },
+    {
+      "a": 10,
+      "b": 79,
+      "weight": 3
+    },
+    {
+      "a": 10,
+      "b": 62,
+      "weight": 1
+    },
+    {
+      "a": 10,
+      "b": 12,
+      "weight": 1
+    },
+    {
+      "a": 10,
+      "b": 123,
+      "weight": 6
+    },
+    {
+      "a": 10,
+      "b": 17,
+      "weight": 15
+    },
+    {
+      "a": 10,
+      "b": 106,
+      "weight": 3
+    },
+    {
+      "a": 11,
+      "b": 12,
+      "weight": 35
+    },
+    {
+      "a": 12,
+      "b": 32,
+      "weight": 17
+    },
+    {
+      "a": 12,
+      "b": 33,
+      "weight": 10
+    },
+    {
+      "a": 12,
+      "b": 133,
+      "weight": 1
+    },
+    {
+      "a": 12,
+      "b": 113,
+      "weight": 5
+    },
+    {
+      "a": 13,
+      "b": 136,
+      "weight": 21
+    },
+    {
+      "a": 13,
+      "b": 18,
+      "weight": 2
+    },
+    {
+      "a": 13,
+      "b": 47,
+      "weight": 1
+    },
+    {
+      "a": 13,
+      "b": 138,
+      "weight": 1
+    },
+    {
+      "a": 14,
+      "b": 125,
+      "weight": 1
+    },
+    {
+      "a": 14,
+      "b": 17,
+      "weight": 1
+    },
+    {
+      "a": 16,
+      "b": 137,
+      "weight": 15
+    },
+    {
+      "a": 16,
+      "b": 47,
+      "weight": 12
+    },
+    {
+      "a": 16,
+      "b": 50,
+      "weight": 7
+    },
+    {
+      "a": 17,
+      "b": 64,
+      "weight": 8
+    },
+    {
+      "a": 17,
+      "b": 66,
+      "weight": 2
+    },
+    {
+      "a": 17,
+      "b": 39,
+      "weight": 3
+    },
+    {
+      "a": 17,
+      "b": 79,
+      "weight": 14
+    },
+    {
+      "a": 17,
+      "b": 80,
+      "weight": 4
+    },
+    {
+      "a": 17,
+      "b": 131,
+      "weight": 18
+    },
+    {
+      "a": 17,
+      "b": 126,
+      "weight": 4
+    },
+    {
+      "a": 17,
+      "b": 116,
+      "weight": 5
+    },
+    {
+      "a": 17,
+      "b": 38,
+      "weight": 2
+    },
+    {
+      "a": 17,
+      "b": 128,
+      "weight": 1
+    },
+    {
+      "a": 17,
+      "b": 125,
+      "weight": 1
+    },
+    {
+      "a": 17,
+      "b": 84,
+      "weight": 18
+    },
+    {
+      "a": 17,
+      "b": 68,
+      "weight": 4
+    },
+    {
+      "a": 17,
+      "b": 55,
+      "weight": 2
+    },
+    {
+      "a": 17,
+      "b": 90,
+      "weight": 2
+    },
+    {
+      "a": 17,
+      "b": 54,
+      "weight": 1
+    },
+    {
+      "a": 18,
+      "b": 45,
+      "weight": 11
+    },
+    {
+      "a": 18,
+      "b": 138,
+      "weight": 10
+    },
+    {
+      "a": 18,
+      "b": 135,
+      "weight": 4
+    },
+    {
+      "a": 19,
+      "b": 129,
+      "weight": 9
+    },
+    {
+      "a": 19,
+      "b": 40,
+      "weight": 47
+    },
+    {
+      "a": 19,
+      "b": 110,
+      "weight": 3
+    },
+    {
+      "a": 19,
+      "b": 104,
+      "weight": 7
+    },
+    {
+      "a": 20,
+      "b": 48,
+      "weight": 23
+    },
+    {
+      "a": 20,
+      "b": 71,
+      "weight": 3
+    },
+    {
+      "a": 20,
+      "b": 32,
+      "weight": 4
+    },
+    {
+      "a": 20,
+      "b": 29,
+      "weight": 23
+    },
+    {
+      "a": 20,
+      "b": 115,
+      "weight": 1
+    },
+    {
+      "a": 21,
+      "b": 100,
+      "weight": 3
+    },
+    {
+      "a": 21,
+      "b": 102,
+      "weight": 10
+    },
+    {
+      "a": 21,
+      "b": 82,
+      "weight": 4
+    },
+    {
+      "a": 21,
+      "b": 58,
+      "weight": 6
+    },
+    {
+      "a": 21,
+      "b": 70,
+      "weight": 1
+    },
+    {
+      "a": 21,
+      "b": 27,
+      "weight": 1
+    },
+    {
+      "a": 22,
+      "b": 30,
+      "weight": 3
+    },
+    {
+      "a": 22,
+      "b": 42,
+      "weight": 6
+    },
+    {
+      "a": 22,
+      "b": 93,
+      "weight": 4
+    },
+    {
+      "a": 23,
+      "b": 41,
+      "weight": 29
+    },
+    {
+      "a": 23,
+      "b": 66,
+      "weight": 6
+    },
+    {
+      "a": 24,
+      "b": 118,
+      "weight": 11
+    },
+    {
+      "a": 24,
+      "b": 110,
+      "weight": 11
+    },
+    {
+      "a": 24,
+      "b": 85,
+      "weight": 10
+    },
+    {
+      "a": 24,
+      "b": 59,
+      "weight": 14
+    },
+    {
+      "a": 24,
+      "b": 34,
+      "weight": 10
+    },
+    {
+      "a": 24,
+      "b": 69,
+      "weight": 2
+    },
+    {
+      "a": 26,
+      "b": 93,
+      "weight": 10
+    },
+    {
+      "a": 26,
+      "b": 108,
+      "weight": 5
+    },
+    {
+      "a": 26,
+      "b": 87,
+      "weight": 1
+    },
+    {
+      "a": 26,
+      "b": 56,
+      "weight": 8
+    },
+    {
+      "a": 26,
+      "b": 30,
+      "weight": 21
+    },
+    {
+      "a": 26,
+      "b": 95,
+      "weight": 2
+    },
+    {
+      "a": 26,
+      "b": 52,
+      "weight": 3
+    },
+    {
+      "a": 27,
+      "b": 58,
+      "weight": 21
+    },
+    {
+      "a": 27,
+      "b": 82,
+      "weight": 17
+    },
+    {
+      "a": 28,
+      "b": 81,
+      "weight": 8
+    },
+    {
+      "a": 28,
+      "b": 66,
+      "weight": 2
+    },
+    {
+      "a": 28,
+      "b": 68,
+      "weight": 12
+    },
+    {
+      "a": 29,
+      "b": 129,
+      "weight": 8
+    },
+    {
+      "a": 29,
+      "b": 115,
+      "weight": 10
+    },
+    {
+      "a": 29,
+      "b": 48,
+      "weight": 5
+    },
+    {
+      "a": 29,
+      "b": 40,
+      "weight": 15
+    },
+    {
+      "a": 30,
+      "b": 104,
+      "weight": 9
+    },
+    {
+      "a": 30,
+      "b": 83,
+      "weight": 12
+    },
+    {
+      "a": 30,
+      "b": 87,
+      "weight": 13
+    },
+    {
+      "a": 31,
+      "b": 116,
+      "weight": 5
+    },
+    {
+      "a": 31,
+      "b": 126,
+      "weight": 7
+    },
+    {
+      "a": 31,
+      "b": 81,
+      "weight": 9
+    },
+    {
+      "a": 31,
+      "b": 41,
+      "weight": 3
+    },
+    {
+      "a": 31,
+      "b": 66,
+      "weight": 2
+    },
+    {
+      "a": 32,
+      "b": 110,
+      "weight": 6
+    },
+    {
+      "a": 32,
+      "b": 118,
+      "weight": 8
+    },
+    {
+      "a": 32,
+      "b": 115,
+      "weight": 10
+    },
+    {
+      "a": 32,
+      "b": 113,
+      "weight": 11
+    },
+    {
+      "a": 32,
+      "b": 62,
+      "weight": 3
+    },
+    {
+      "a": 33,
+      "b": 113,
+      "weight": 34
+    },
+    {
+      "a": 34,
+      "b": 138,
+      "weight": 7
+    },
+    {
+      "a": 34,
+      "b": 59,
+      "weight": 10
+    },
+    {
+      "a": 34,
+      "b": 46,
+      "weight": 2
+    },
+    {
+      "a": 34,
+      "b": 110,
+      "weight": 6
+    },
+    {
+      "a": 35,
+      "b": 102,
+      "weight": 31
+    },
+    {
+      "a": 35,
+      "b": 103,
+      "weight": 15
+    },
+    {
+      "a": 36,
+      "b": 117,
+      "weight": 21
+    },
+    {
+      "a": 36,
+      "b": 121,
+      "weight": 9
+    },
+    {
+      "a": 36,
+      "b": 55,
+      "weight": 8
+    },
+    {
+      "a": 36,
+      "b": 50,
+      "weight": 1
+    },
+    {
+      "a": 37,
+      "b": 86,
+      "weight": 4
+    },
+    {
+      "a": 37,
+      "b": 61,
+      "weight": 24
+    },
+    {
+      "a": 37,
+      "b": 57,
+      "weight": 30
+    },
+    {
+      "a": 37,
+      "b": 51,
+      "weight": 3
+    },
+    {
+      "a": 37,
+      "b": 91,
+      "weight": 2
+    },
+    {
+      "a": 38,
+      "b": 89,
+      "weight": 11
+    },
+    {
+      "a": 38,
+      "b": 111,
+      "weight": 2
+    },
+    {
+      "a": 38,
+      "b": 132,
+      "weight": 2
+    },
+    {
+      "a": 38,
+      "b": 112,
+      "weight": 3
+    },
+    {
+      "a": 39,
+      "b": 116,
+      "weight": 28
+    },
+    {
+      "a": 39,
+      "b": 53,
+      "weight": 9
+    },
+    {
+      "a": 39,
+      "b": 64,
+      "weight": 14
+    },
+    {
+      "a": 40,
+      "b": 129,
+      "weight": 8
+    },
+    {
+      "a": 40,
+      "b": 110,
+      "weight": 9
+    },
+    {
+      "a": 40,
+      "b": 115,
+      "weight": 16
+    },
+    {
+      "a": 41,
+      "b": 66,
+      "weight": 11
+    },
+    {
+      "a": 42,
+      "b": 93,
+      "weight": 19
+    },
+    {
+      "a": 43,
+      "b": 50,
+      "weight": 1
+    },
+    {
+      "a": 43,
+      "b": 135,
+      "weight": 1
+    },
+    {
+      "a": 43,
+      "b": 137,
+      "weight": 7
+    },
+    {
+      "a": 43,
+      "b": 98,
+      "weight": 1
+    },
+    {
+      "a": 44,
+      "b": 103,
+      "weight": 6
+    },
+    {
+      "a": 44,
+      "b": 109,
+      "weight": 7
+    },
+    {
+      "a": 44,
+      "b": 65,
+      "weight": 10
+    },
+    {
+      "a": 45,
+      "b": 78,
+      "weight": 6
+    },
+    {
+      "a": 45,
+      "b": 135,
+      "weight": 3
+    },
+    {
+      "a": 45,
+      "b": 138,
+      "weight": 11
+    },
+    {
+      "a": 45,
+      "b": 46,
+      "weight": 3
+    },
+    {
+      "a": 45,
+      "b": 89,
+      "weight": 14
+    },
+    {
+      "a": 45,
+      "b": 112,
+      "weight": 4
+    },
+    {
+      "a": 46,
+      "b": 138,
+      "weight": 11
+    },
+    {
+      "a": 46,
+      "b": 78,
+      "weight": 12
+    },
+    {
+      "a": 46,
+      "b": 59,
+      "weight": 11
+    },
+    {
+      "a": 46,
+      "b": 114,
+      "weight": 12
+    },
+    {
+      "a": 47,
+      "b": 98,
+      "weight": 9
+    },
+    {
+      "a": 47,
+      "b": 137,
+      "weight": 1
+    },
+    {
+      "a": 48,
+      "b": 71,
+      "weight": 4
+    },
+    {
+      "a": 48,
+      "b": 49,
+      "weight": 12
+    },
+    {
+      "a": 48,
+      "b": 88,
+      "weight": 4
+    },
+    {
+      "a": 49,
+      "b": 133,
+      "weight": 7
+    },
+    {
+      "a": 49,
+      "b": 88,
+      "weight": 10
+    },
+    {
+      "a": 50,
+      "b": 137,
+      "weight": 14
+    },
+    {
+      "a": 50,
+      "b": 76,
+      "weight": 34
+    },
+    {
+      "a": 50,
+      "b": 117,
+      "weight": 4
+    },
+    {
+      "a": 51,
+      "b": 61,
+      "weight": 1
+    },
+    {
+      "a": 51,
+      "b": 91,
+      "weight": 1
+    },
+    {
+      "a": 52,
+      "b": 96,
+      "weight": 29
+    },
+    {
+      "a": 52,
+      "b": 56,
+      "weight": 2
+    },
+    {
+      "a": 52,
+      "b": 95,
+      "weight": 42
+    },
+    {
+      "a": 52,
+      "b": 120,
+      "weight": 18
+    },
+    {
+      "a": 53,
+      "b": 67,
+      "weight": 19
+    },
+    {
+      "a": 53,
+      "b": 131,
+      "weight": 3
+    },
+    {
+      "a": 53,
+      "b": 90,
+      "weight": 5
+    },
+    {
+      "a": 54,
+      "b": 94,
+      "weight": 13
+    },
+    {
+      "a": 54,
+      "b": 128,
+      "weight": 3
+    },
+    {
+      "a": 54,
+      "b": 80,
+      "weight": 12
+    },
+    {
+      "a": 55,
+      "b": 132,
+      "weight": 25
+    },
+    {
+      "a": 55,
+      "b": 121,
+      "weight": 5
+    },
+    {
+      "a": 56,
+      "b": 108,
+      "weight": 4
+    },
+    {
+      "a": 56,
+      "b": 119,
+      "weight": 8
+    },
+    {
+      "a": 56,
+      "b": 96,
+      "weight": 6
+    },
+    {
+      "a": 56,
+      "b": 86,
+      "weight": 6
+    },
+    {
+      "a": 57,
+      "b": 96,
+      "weight": 16
+    },
+    {
+      "a": 57,
+      "b": 86,
+      "weight": 7
+    },
+    {
+      "a": 58,
+      "b": 70,
+      "weight": 2
+    },
+    {
+      "a": 59,
+      "b": 69,
+      "weight": 25
+    },
+    {
+      "a": 59,
+      "b": 114,
+      "weight": 16
+    },
+    {
+      "a": 60,
+      "b": 70,
+      "weight": 11
+    },
+    {
+      "a": 60,
+      "b": 97,
+      "weight": 6
+    },
+    {
+      "a": 60,
+      "b": 73,
+      "weight": 6
+    },
+    {
+      "a": 61,
+      "b": 120,
+      "weight": 1
+    },
+    {
+      "a": 62,
+      "b": 101,
+      "weight": 12
+    },
+    {
+      "a": 62,
+      "b": 69,
+      "weight": 7
+    },
+    {
+      "a": 62,
+      "b": 123,
+      "weight": 24
+    },
+    {
+      "a": 62,
+      "b": 85,
+      "weight": 5
+    },
+    {
+      "a": 62,
+      "b": 113,
+      "weight": 1
+    },
+    {
+      "a": 63,
+      "b": 112,
+      "weight": 17
+    },
+    {
+      "a": 63,
+      "b": 78,
+      "weight": 4
+    },
+    {
+      "a": 63,
+      "b": 105,
+      "weight": 10
+    },
+    {
+      "a": 63,
+      "b": 114,
+      "weight": 1
+    },
+    {
+      "a": 64,
+      "b": 90,
+      "weight": 2
+    },
+    {
+      "a": 65,
+      "b": 95,
+      "weight": 2
+    },
+    {
+      "a": 65,
+      "b": 87,
+      "weight": 9
+    },
+    {
+      "a": 65,
+      "b": 83,
+      "weight": 2
+    },
+    {
+      "a": 67,
+      "b": 99,
+      "weight": 11
+    },
+    {
+      "a": 67,
+      "b": 131,
+      "weight": 8
+    },
+    {
+      "a": 67,
+      "b": 116,
+      "weight": 5
+    },
+    {
+      "a": 68,
+      "b": 99,
+      "weight": 5
+    },
+    {
+      "a": 68,
+      "b": 84,
+      "weight": 5
+    },
+    {
+      "a": 68,
+      "b": 107,
+      "weight": 7
+    },
+    {
+      "a": 68,
+      "b": 131,
+      "weight": 3
+    },
+    {
+      "a": 69,
+      "b": 101,
+      "weight": 56
+    },
+    {
+      "a": 69,
+      "b": 114,
+      "weight": 29
+    },
+    {
+      "a": 69,
+      "b": 85,
+      "weight": 19
+    },
+    {
+      "a": 70,
+      "b": 102,
+      "weight": 7
+    },
+    {
+      "a": 70,
+      "b": 73,
+      "weight": 16
+    },
+    {
+      "a": 70,
+      "b": 127,
+      "weight": 1
+    },
+    {
+      "a": 70,
+      "b": 109,
+      "weight": 5
+    },
+    {
+      "a": 71,
+      "b": 133,
+      "weight": 8
+    },
+    {
+      "a": 73,
+      "b": 127,
+      "weight": 6
+    },
+    {
+      "a": 74,
+      "b": 134,
+      "weight": 22
+    },
+    {
+      "a": 74,
+      "b": 119,
+      "weight": 7
+    },
+    {
+      "a": 74,
+      "b": 75,
+      "weight": 6
+    },
+    {
+      "a": 74,
+      "b": 108,
+      "weight": 5
+    },
+    {
+      "a": 75,
+      "b": 77,
+      "weight": 17
+    },
+    {
+      "a": 75,
+      "b": 119,
+      "weight": 7
+    },
+    {
+      "a": 75,
+      "b": 86,
+      "weight": 10
+    },
+    {
+      "a": 76,
+      "b": 135,
+      "weight": 23
+    },
+    {
+      "a": 76,
+      "b": 117,
+      "weight": 6
+    },
+    {
+      "a": 77,
+      "b": 86,
+      "weight": 7
+    },
+    {
+      "a": 77,
+      "b": 91,
+      "weight": 29
+    },
+    {
+      "a": 77,
+      "b": 122,
+      "weight": 4
+    },
+    {
+      "a": 78,
+      "b": 112,
+      "weight": 5
+    },
+    {
+      "a": 80,
+      "b": 94,
+      "weight": 4
+    },
+    {
+      "a": 80,
+      "b": 105,
+      "weight": 12
+    },
+    {
+      "a": 81,
+      "b": 99,
+      "weight": 12
+    },
+    {
+      "a": 81,
+      "b": 116,
+      "weight": 11
+    },
+    {
+      "a": 82,
+      "b": 100,
+      "weight": 7
+    },
+    {
+      "a": 82,
+      "b": 124,
+      "weight": 17
+    },
+    {
+      "a": 83,
+      "b": 87,
+      "weight": 27
+    },
+    {
+      "a": 83,
+      "b": 97,
+      "weight": 2
+    },
+    {
+      "a": 83,
+      "b": 88,
+      "weight": 5
+    },
+    {
+      "a": 84,
+      "b": 131,
+      "weight": 12
+    },
+    {
+      "a": 86,
+      "b": 91,
+      "weight": 27
+    },
+    {
+      "a": 87,
+      "b": 95,
+      "weight": 6
+    },
+    {
+      "a": 88,
+      "b": 104,
+      "weight": 22
+    },
+    {
+      "a": 88,
+      "b": 133,
+      "weight": 2
+    },
+    {
+      "a": 88,
+      "b": 97,
+      "weight": 2
+    },
+    {
+      "a": 88,
+      "b": 129,
+      "weight": 3
+    },
+    {
+      "a": 89,
+      "b": 135,
+      "weight": 7
+    },
+    {
+      "a": 89,
+      "b": 112,
+      "weight": 18
+    },
+    {
+      "a": 92,
+      "b": 122,
+      "weight": 7
+    },
+    {
+      "a": 93,
+      "b": 134,
+      "weight": 13
+    },
+    {
+      "a": 94,
+      "b": 112,
+      "weight": 9
+    },
+    {
+      "a": 94,
+      "b": 128,
+      "weight": 3
+    },
+    {
+      "a": 94,
+      "b": 111,
+      "weight": 3
+    },
+    {
+      "a": 94,
+      "b": 105,
+      "weight": 5
+    },
+    {
+      "a": 96,
+      "b": 120,
+      "weight": 10
+    },
+    {
+      "a": 99,
+      "b": 107,
+      "weight": 8
+    },
+    {
+      "a": 99,
+      "b": 131,
+      "weight": 7
+    },
+    {
+      "a": 100,
+      "b": 102,
+      "weight": 7
+    },
+    {
+      "a": 100,
+      "b": 124,
+      "weight": 14
+    },
+    {
+      "a": 101,
+      "b": 123,
+      "weight": 10
+    },
+    {
+      "a": 101,
+      "b": 114,
+      "weight": 16
+    },
+    {
+      "a": 102,
+      "b": 103,
+      "weight": 11
+    },
+    {
+      "a": 103,
+      "b": 109,
+      "weight": 4
+    },
+    {
+      "a": 104,
+      "b": 129,
+      "weight": 26
+    },
+    {
+      "a": 105,
+      "b": 123,
+      "weight": 1
+    },
+    {
+      "a": 105,
+      "b": 112,
+      "weight": 1
+    },
+    {
+      "a": 107,
+      "b": 131,
+      "weight": 6
+    },
+    {
+      "a": 108,
+      "b": 119,
+      "weight": 27
+    },
+    {
+      "a": 108,
+      "b": 134,
+      "weight": 8
+    },
+    {
+      "a": 110,
+      "b": 138,
+      "weight": 7
+    },
+    {
+      "a": 110,
+      "b": 118,
+      "weight": 5
+    },
+    {
+      "a": 110,
+      "b": 115,
+      "weight": 4
+    },
+    {
+      "a": 111,
+      "b": 112,
+      "weight": 10
+    },
+    {
+      "a": 111,
+      "b": 128,
+      "weight": 10
+    },
+    {
+      "a": 114,
+      "b": 123,
+      "weight": 5
+    },
+    {
+      "a": 117,
+      "b": 121,
+      "weight": 10
+    },
+    {
+      "a": 121,
+      "b": 132,
+      "weight": 17
+    },
+    {
+      "a": 121,
+      "b": 135,
+      "weight": 4
+    },
+    {
+      "a": 132,
+      "b": 135,
+      "weight": 10
+    }
+  ],
+  "params": {
+    "total_data_centers": 32,
+    "power_by_tier": {
+      "mega": 100,
+      "major": 40,
+      "standard": 15
+    },
+    "soft_access_decay": 0.5,
+    "min_spawn_separation_hops": 2,
+    "min_spawn_to_dc_separation_hops": 2,
+    "spawn_ring_hop_band": [
+      4,
+      6
+    ],
+    "hop_center_suburb": "Acton (ACT)"
+  },
+  "data_centers": [
+    {
+      "name": "City",
+      "tier": "mega",
+      "tflops": 100
+    },
+    {
+      "name": "Kingston (ACT)",
+      "tier": "mega",
+      "tflops": 100
+    },
+    {
+      "name": "Fyshwick",
+      "tier": "mega",
+      "tflops": 100
+    },
+    {
+      "name": "Belconnen",
+      "tier": "mega",
+      "tflops": 100
+    },
+    {
+      "name": "Phillip",
+      "tier": "mega",
+      "tflops": 100
+    },
+    {
+      "name": "Gungahlin",
+      "tier": "major",
+      "tflops": 40
+    },
+    {
+      "name": "Greenway",
+      "tier": "major",
+      "tflops": 40
+    },
+    {
+      "name": "Weston (ACT)",
+      "tier": "major",
+      "tflops": 40
+    },
+    {
+      "name": "Dickson",
+      "tier": "major",
+      "tflops": 40
+    },
+    {
+      "name": "Braddon",
+      "tier": "major",
+      "tflops": 40
+    },
+    {
+      "name": "Bruce (ACT)",
+      "tier": "major",
+      "tflops": 40
+    },
+    {
+      "name": "Mitchell (ACT)",
+      "tier": "major",
+      "tflops": 40
+    },
+    {
+      "name": "Hume",
+      "tier": "major",
+      "tflops": 40
+    },
+    {
+      "name": "Pialligo",
+      "tier": "major",
+      "tflops": 40
+    },
+    {
+      "name": "Symonston",
+      "tier": "major",
+      "tflops": 40
+    },
+    {
+      "name": "Uriarra Village",
+      "tier": "standard",
+      "tflops": 15
+    },
+    {
+      "name": "Whitlam",
+      "tier": "standard",
+      "tflops": 15
+    },
+    {
+      "name": "Banks",
+      "tier": "standard",
+      "tflops": 15
+    },
+    {
+      "name": "Taylor",
+      "tier": "standard",
+      "tflops": 15
+    },
+    {
+      "name": "Watson",
+      "tier": "standard",
+      "tflops": 15
+    },
+    {
+      "name": "Weetangera",
+      "tier": "standard",
+      "tflops": 15
+    },
+    {
+      "name": "Yarralumla",
+      "tier": "standard",
+      "tflops": 15
+    },
+    {
+      "name": "Beard",
+      "tier": "standard",
+      "tflops": 15
+    },
+    {
+      "name": "Calwell",
+      "tier": "standard",
+      "tflops": 15
+    },
+    {
+      "name": "Cook",
+      "tier": "standard",
+      "tflops": 15
+    },
+    {
+      "name": "Denman Prospect",
+      "tier": "standard",
+      "tflops": 15
+    },
+    {
+      "name": "Fadden",
+      "tier": "standard",
+      "tflops": 15
+    },
+    {
+      "name": "Forrest (ACT)",
+      "tier": "standard",
+      "tflops": 15
+    },
+    {
+      "name": "Hall",
+      "tier": "standard",
+      "tflops": 15
+    },
+    {
+      "name": "Higgins",
+      "tier": "standard",
+      "tflops": 15
+    },
+    {
+      "name": "Oaks Estate",
+      "tier": "standard",
+      "tflops": 15
+    },
+    {
+      "name": "Russell",
+      "tier": "standard",
+      "tflops": 15
+    }
+  ],
+  "spawn_table_by_lobby_size": {
+    "4": {
+      "spawns": [
+        "Giralang",
+        "Isaacs",
+        "Chapman",
+        "Latham (ACT)"
+      ],
+      "min_sep": 3,
+      "ratio": 1.802,
+      "scores": [
+        87.25,
+        99.0,
+        54.95,
+        59.46
+      ]
+    },
+    "5": {
+      "spawns": [
+        "Wright",
+        "Dunlop",
+        "Giralang",
+        "Gilmore (ACT)",
+        "Gordon (ACT)"
+      ],
+      "min_sep": 2,
+      "ratio": 1.749,
+      "scores": [
+        52.32,
+        54.75,
+        87.25,
+        82.15,
+        91.52
+      ]
+    },
+    "6": {
+      "spawns": [
+        "Crace",
+        "Macarthur (ACT)",
+        "Gordon (ACT)",
+        "Duffy",
+        "Scullin",
+        "Fraser"
+      ],
+      "min_sep": 2,
+      "ratio": 2.007,
+      "scores": [
+        64.25,
+        85.9,
+        91.52,
+        45.6,
+        61.34,
+        52.53
+      ]
+    },
+    "7": {
+      "spawns": [
+        "Latham (ACT)",
+        "Fraser",
+        "Nicholls",
+        "Gilmore (ACT)",
+        "Theodore (ACT)",
+        "Fisher (ACT)",
+        "Wright"
+      ],
+      "min_sep": 2,
+      "ratio": 1.723,
+      "scores": [
+        59.46,
+        52.53,
+        86.78,
+        82.15,
+        85.9,
+        90.14,
+        52.32
+      ]
+    },
+    "8": {
+      "spawns": [
+        "Casey",
+        "Moncrieff",
+        "Macarthur (ACT)",
+        "Richardson",
+        "Fisher (ACT)",
+        "Wright",
+        "Scullin",
+        "Flynn (ACT)"
+      ],
+      "min_sep": 2,
+      "ratio": 2.732,
+      "scores": [
+        49.33,
+        36.23,
+        85.9,
+        87.77,
+        90.14,
+        52.32,
+        61.34,
+        33.0
+      ]
+    },
+    "9": {
+      "spawns": [
+        "Bonner",
+        "Chisholm (ACT)",
+        "Farrer",
+        "Chapman",
+        "Wright",
+        "Scullin",
+        "Charnwood",
+        "Spence (ACT)",
+        "Nicholls"
+      ],
+      "min_sep": 2,
+      "ratio": 2.318,
+      "scores": [
+        47.72,
+        87.77,
+        93.54,
+        54.95,
+        52.32,
+        61.34,
+        40.35,
+        67.29,
+        86.78
+      ]
+    },
+    "10": {
+      "spawns": [
+        "Jacka",
+        "Macarthur (ACT)",
+        "Theodore (ACT)",
+        "Torrens",
+        "Rivett",
+        "Molonglo",
+        "Scullin",
+        "Charnwood",
+        "Spence (ACT)",
+        "Nicholls"
+      ],
+      "min_sep": 2,
+      "ratio": 2.712,
+      "scores": [
+        34.49,
+        85.9,
+        85.9,
+        93.54,
+        40.05,
+        49.55,
+        61.34,
+        40.35,
+        67.29,
+        86.78
+      ]
+    },
+    "11": {
+      "spawns": [
+        "Richardson",
+        "Torrens",
+        "Rivett",
+        "Molonglo",
+        "Scullin",
+        "Charnwood",
+        "Melba",
+        "Casey",
+        "Crace",
+        "Bonner",
+        "Isaacs"
+      ],
+      "min_sep": 2,
+      "ratio": 2.472,
+      "scores": [
+        87.77,
+        93.54,
+        40.05,
+        49.55,
+        61.34,
+        40.35,
+        52.69,
+        49.33,
+        64.25,
+        47.72,
+        99.0
+      ]
+    },
+    "12": {
+      "spawns": [
+        "Casey",
+        "Crace",
+        "Jacka",
+        "Macarthur (ACT)",
+        "Theodore (ACT)",
+        "Farrer",
+        "Fisher (ACT)",
+        "Duffy",
+        "Molonglo",
+        "Scullin",
+        "Charnwood",
+        "Melba"
+      ],
+      "min_sep": 2,
+      "ratio": 2.712,
+      "scores": [
+        49.33,
+        64.25,
+        34.49,
+        85.9,
+        85.9,
+        93.54,
+        90.14,
+        45.6,
+        49.55,
+        61.34,
+        40.35,
+        52.69
+      ]
+    }
+  },
+  "worst_case_soft_access_ratio": 2.732
+}

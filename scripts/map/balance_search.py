@@ -1,3 +1,9 @@
+# SUPERSEDED by build_lobby_config.py: this script searched for a small
+# fixed faction roster with exact hop-equidistance to a handful of data
+# centers. The design moved to lobby-based games (4-12 players per game,
+# spawns computed per-lobby-size) with 30+ tiered data centers, which this
+# equidistance search doesn't address. Kept as process evidence -- see
+# ANU-006's Notes for why the fixed-roster approach was dropped.
 import json, itertools
 import networkx as nx
 import numpy as np
