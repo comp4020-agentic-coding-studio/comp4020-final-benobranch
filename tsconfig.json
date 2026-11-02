@@ -8,6 +8,10 @@
     // Imports name the file they mean, extension and all --- which is what
     // node itself wants when it runs a .ts file directly.
     "allowImportingTsExtensions": true,
+    // server/public/app.js is plain JS (browsers can't run .ts), checked via
+    // `// @ts-check` + JSDoc against server/protocol.ts's types so client/
+    // server message shapes can't silently drift apart.
+    "allowJs": true,
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "types": ["node"],
     "strict": true,

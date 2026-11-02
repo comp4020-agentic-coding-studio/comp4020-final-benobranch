@@ -52,8 +52,8 @@ export function parseClientMessage(raw: string): ClientMessage {
   const { type } = data as { type: unknown };
   if (type === "hello") {
     const { name } = data as Partial<ClientHello>;
-    if (typeof name !== "string" || name.length === 0) {
-      throw new Error("'hello' requires a non-empty 'name'");
+    if (typeof name !== "string" || name.length === 0 || name.length > 40) {
+      throw new Error("'hello' requires a 'name' between 1 and 40 characters");
     }
     return { type: "hello", name };
   }
