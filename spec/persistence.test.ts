@@ -10,48 +10,129 @@ import { join } from "node:path";
 import { spawnServer, type SpawnedServer } from "./lib/spawn-server.ts";
 import WebSocket from "ws";
 
-const dataDir = mkdtempSync(join(tmpdir(), "anu005-persist-"));
+const dataDir = mkdtempSync(join(tmpdir(), "anu008-persist-"));
 const port = 8101;
 
 const servers: SpawnedServer[] = [];
+const dataDirs: string[] = [dataDir];
 afterAll(async () => {
   for (const server of servers) await server.stop();
-  rmSync(dataDir, { recursive: true, force: true });
+  for (const dir of dataDirs) rmSync(dir, { recursive: true, force: true });
 });
 
-async function bumpOnce(baseUrl: string): Promise<void> {
-  const ws = new WebSocket(`${baseUrl.replace(/^http/, "ws")}/ws`);
-  await new Promise((resolve, reject) => {
-    ws.on("open", resolve);
-    ws.on("error", reject);
-  });
-  ws.send(JSON.stringify({ type: "hello", name: "restart-test" }));
-  await new Promise((resolve) => ws.once("message", resolve)); // welcome
-  ws.send(JSON.stringify({ type: "bump" }));
-  await new Promise((resolve) => ws.once("message", resolve)); // counter
-  ws.close();
-  await new Promise((resolve) => ws.once("close", resolve));
+interface ServerMessage {
+  type: string;
+  [key: string]: unknown;
 }
 
-it("keeps data across a real process restart", async () => {
+interface Client {
+  ws: WebSocket;
+  messages: ServerMessage[];
+}
+
+// `hello` auto-joins 'default' and the server broadcasts THAT lobby's state
+// right after `welcome`, so "the next message after I send X" is not safe to
+// assume is X's result — it races with that broadcast. Collecting all
+// messages and matching by predicate (as realtime.test.ts does) avoids it.
+function connect(baseUrl: string, name: string, token?: string): Promise<Client> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`${baseUrl.replace(/^http/, "ws")}/ws`);
+    const messages: ServerMessage[] = [];
+    ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
+    ws.on("error", reject);
+    ws.on("open", () => ws.send(JSON.stringify({ type: "hello", name, token })));
+    const client = { ws, messages };
+    waitFor(client, (m) => m.type === "welcome").then(() => resolve(client), reject);
+  });
+}
+
+function send(client: Client, message: Record<string, unknown>): void {
+  client.ws.send(JSON.stringify(message));
+}
+
+function waitFor(client: Client, predicate: (m: ServerMessage) => boolean, timeoutMs = 2000): Promise<ServerMessage> {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    const check = (): void => {
+      const found = client.messages.find(predicate);
+      if (found) return resolve(found);
+      if (Date.now() - start > timeoutMs) return reject(new Error("timed out waiting for message"));
+      setTimeout(check, 20);
+    };
+    check();
+  });
+}
+
+async function closeAndWait(client: Client): Promise<void> {
+  client.ws.close();
+  await new Promise((resolve) => client.ws.once("close", resolve));
+}
+
+it("keeps a lobby's state across a real process restart", async () => {
   const first = await spawnServer({ port, dataDir });
   servers.push(first);
 
-  await bumpOnce(first.baseUrl);
-  await bumpOnce(first.baseUrl);
+  // A fresh, uniquely named lobby, not 'default' — matched by name below so
+  // the assertion can't accidentally pick up default's own broadcasts.
+  const lobbyName = `restart-lobby-${Date.now()}`;
+  const creator = await connect(first.baseUrl, "restart-test");
+  send(creator, { type: "createLobby", name: lobbyName, capacity: 4 });
+  const created = await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { name: string }).name === lobbyName);
+  const lobbyId = (created.lobby as { lobbyId: string }).lobbyId;
 
+  send(creator, { type: "bump" });
+  await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { lobbyId: string; count: number }).lobbyId === lobbyId && (m.lobby as { count: number }).count === 1);
+  send(creator, { type: "bump" });
+  await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { lobbyId: string; count: number }).lobbyId === lobbyId && (m.lobby as { count: number }).count === 2);
+
+  await closeAndWait(creator);
   await first.stop();
 
   const second = await spawnServer({ port, dataDir });
   servers.push(second);
 
-  const ws = new WebSocket(`${second.baseUrl.replace(/^http/, "ws")}/ws`);
-  const welcome = await new Promise<{ count: number }>((resolve, reject) => {
-    ws.on("error", reject);
-    ws.on("open", () => ws.send(JSON.stringify({ type: "hello", name: "reader" })));
-    ws.once("message", (raw) => resolve(JSON.parse(raw.toString())));
-  });
-  ws.close();
+  const reader = await connect(second.baseUrl, "reader");
+  const readerWelcome = reader.messages.find((m) => m.type === "welcome")!;
 
-  expect(welcome.count, "counter should have survived the restart").toBe(2);
+  send(reader, { type: "joinLobby", lobbyId });
+  const joined = await waitFor(reader, (m) => m.type === "lobbyState" && (m.lobby as { lobbyId: string }).lobbyId === lobbyId);
+  await closeAndWait(reader);
+
+  expect((readerWelcome.lobby as { lobbyId: string }).lobbyId, "a fresh identity still lands in the default lobby").toBe(
+    "default",
+  );
+  expect((joined.lobby as { count: number }).count, "the lobby's counter should have survived the restart").toBe(2);
+});
+
+it("resumes the same playerId and lobby via token across a restart", async () => {
+  const tokenTestDataDir = mkdtempSync(join(tmpdir(), "anu008-token-"));
+  dataDirs.push(tokenTestDataDir);
+  const first = await spawnServer({ port: port + 1, dataDir: tokenTestDataDir });
+  servers.push(first);
+
+  const lobbyName = `token-lobby-${Date.now()}`;
+  const creator = await connect(first.baseUrl, "token-test");
+  const welcome = creator.messages.find((m) => m.type === "welcome")!;
+  const token = welcome.token as string;
+  const playerId = welcome.playerId as string;
+
+  send(creator, { type: "createLobby", name: lobbyName, capacity: 4 });
+  const created = await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { name: string }).name === lobbyName);
+  const lobbyId = (created.lobby as { lobbyId: string }).lobbyId;
+
+  await closeAndWait(creator);
+  await first.stop();
+
+  const second = await spawnServer({ port: port + 1, dataDir: tokenTestDataDir });
+  servers.push(second);
+
+  const resumed = await connect(second.baseUrl, "token-test", token);
+  const resumedWelcome = resumed.messages.find((m) => m.type === "welcome")!;
+  await closeAndWait(resumed);
+
+  expect(resumedWelcome.playerId, "the same token should resume the same playerId").toBe(playerId);
+  expect(
+    (resumedWelcome.lobby as { lobbyId: string }).lobbyId,
+    "the same token should resume the lobby that player was in",
+  ).toBe(lobbyId);
 });
