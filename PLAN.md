@@ -213,9 +213,13 @@ that ships in the repo.
 
 ## Marker constraints to design for
 
-- The marker uses **two incognito windows side by side**, possibly alone, so
-  one person must be able to play as two players/factions and see real-time
-  updates between them.
+- The marker uses **two separate Chrome profiles side by side** (an
+  incognito window counts as one of the two), possibly alone, so one person
+  must be able to play as two players/factions and see real-time updates
+  between them. Two incognito windows from the *same* Chrome session are not
+  enough to test this — they share storage with each other, so anything
+  keyed off localStorage (session tokens, "Continue") would wrongly resume
+  as the same player in both.
 - The marker returns the **next day after a restart**, so the world (or the
   archived season) must clearly still be there.
 - The game must work at both marking viewports, including narrow ones — a
