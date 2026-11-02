@@ -3,8 +3,16 @@
 // TypeScript, so this stays hand-written JS rather than introducing a
 // bundler for a GUI this small. Typed against server/protocol.ts via JSDoc
 // so `pnpm typecheck` still catches a drifted message shape.
+//
+// This is still just the ANU-007 HUD adapted to ANU-008's lobby/identity
+// protocol — proving hello/welcome/lobbyState end to end with a token
+// persisted across reloads. ANU-009 replaces this with real Home/Browse/HUD
+// screens; this file deliberately doesn't grow that scope.
 /** @typedef {import("../protocol.ts").ServerMessage} ServerMessage */
-/** @typedef {import("../protocol.ts").PlayerSummary} PlayerSummary */
+/** @typedef {import("../protocol.ts").PlayerPresence} PlayerPresence */
+/** @typedef {import("../protocol.ts").LobbyState} LobbyState */
+
+const TOKEN_KEY = "infrastructure-siege:token";
 
 const statusEl = /** @type {HTMLElement} */ (document.getElementById("status"));
 const joinScreen = /** @type {HTMLElement} */ (document.getElementById("join-screen"));
@@ -16,6 +24,23 @@ const countEl = /** @type {HTMLElement} */ (document.getElementById("count"));
 const lastBumpedByEl = /** @type {HTMLElement} */ (document.getElementById("last-bumped-by"));
 const playerCountEl = /** @type {HTMLElement} */ (document.getElementById("player-count"));
 const playerListEl = /** @type {HTMLElement} */ (document.getElementById("player-list"));
+const lobbyNameEl = document.getElementById("lobby-name");
+
+function loadToken() {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null; // private browsing / blocked storage — fall back to a fresh identity every load
+  }
+}
+
+function saveToken(/** @type {string} */ token) {
+  try {
+    localStorage.setItem(TOKEN_KEY, token);
+  } catch {
+    // nothing to do — this session just won't resume next load
+  }
+}
 
 /** @type {string | null} */
 let myPlayerId = null;
@@ -32,18 +57,25 @@ function setStatus(/** @type {"connecting" | "connected" | "disconnected"} */ st
     state === "connecting" ? "Connecting…" : state === "connected" ? "Connected" : "Disconnected — retrying…";
 }
 
-function renderPlayers(/** @type {PlayerSummary[]} */ players) {
-  playerCountEl.textContent = `${players.length} online`;
+function renderLobby(/** @type {LobbyState} */ lobby) {
+  if (lobbyNameEl) lobbyNameEl.textContent = lobby.name;
+  countEl.textContent = String(lobby.count);
+  lastBumpedByEl.textContent = lobby.lastBumpedBy ?? "nobody yet";
+
+  const onlineCount = lobby.members.filter((m) => m.online).length;
+  playerCountEl.textContent = `${onlineCount} online`;
+
   playerListEl.replaceChildren(
-    ...players.map((p) => {
+    ...lobby.members.map((/** @type {PlayerPresence} */ m) => {
       const li = document.createElement("li");
-      if (p.playerId === myPlayerId) li.classList.add("self");
+      if (m.playerId === myPlayerId) li.classList.add("self");
+      if (!m.online) li.classList.add("offline");
       const dot = document.createElement("span");
       dot.className = "player-list__dot";
       const label = document.createElement("span");
-      // textContent, never innerHTML: player names are untrusted input
-      // broadcast to every connected client.
-      label.textContent = p.playerId === myPlayerId ? `${p.name} (you)` : p.name;
+      // textContent, never innerHTML: player/lobby names are untrusted
+      // input broadcast to every connected client.
+      label.textContent = m.playerId === myPlayerId ? `${m.name} (you)` : m.name;
       li.append(dot, label);
       return li;
     }),
@@ -53,17 +85,16 @@ function renderPlayers(/** @type {PlayerSummary[]} */ players) {
 function handleMessage(/** @type {ServerMessage} */ msg) {
   if (msg.type === "welcome") {
     myPlayerId = msg.playerId;
-    countEl.textContent = String(msg.count);
-    renderPlayers(msg.players);
+    saveToken(msg.token);
+    renderLobby(msg.lobby);
     joinScreen.hidden = true;
     hudScreen.hidden = false;
     bumpButton.disabled = false;
     hasJoined = true;
-  } else if (msg.type === "counter") {
-    countEl.textContent = String(msg.count);
-    lastBumpedByEl.textContent = msg.lastBumpedBy ?? "nobody yet";
-  } else if (msg.type === "presence") {
-    renderPlayers(msg.players);
+  } else if (msg.type === "lobbyState") {
+    renderLobby(msg.lobby);
+  } else if (msg.type === "error") {
+    console.error("server error:", msg.message);
   }
 }
 
@@ -76,12 +107,12 @@ function connect() {
   ws.addEventListener("open", () => {
     reconnectAttempt = 0;
     setStatus("connected");
-    // The server assigns a fresh playerId per connection and rejects any
-    // action before 'hello' (1008), so a reconnect has to re-announce
-    // itself exactly like a first connection would.
+    // The server resumes identity from the stored token (if any) and
+    // rejects any action before 'hello' (1008), so a reconnect has to
+    // re-announce itself exactly like a first connection would.
     if (pendingName) {
       bumpButton.disabled = true;
-      ws.send(JSON.stringify({ type: "hello", name: pendingName }));
+      ws.send(JSON.stringify({ type: "hello", name: pendingName, token: loadToken() ?? undefined }));
     }
   });
 
@@ -105,7 +136,7 @@ joinForm.addEventListener("submit", (event) => {
   if (!name) return;
   pendingName = name;
   if (socket?.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({ type: "hello", name }));
+    socket.send(JSON.stringify({ type: "hello", name, token: loadToken() ?? undefined }));
   }
 });
 

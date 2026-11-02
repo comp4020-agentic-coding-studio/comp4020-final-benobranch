@@ -218,10 +218,18 @@ button:not(:disabled):hover {
   border-color: var(--accent-dim);
 }
 
+.player-list li.offline {
+  color: var(--text-dim);
+}
+
 .player-list__dot {
   width: 0.5rem;
   height: 0.5rem;
   border-radius: 50%;
   background: var(--accent);
   flex-shrink: 0;
+}
+
+.player-list li.offline .player-list__dot {
+  background: var(--border);
 }

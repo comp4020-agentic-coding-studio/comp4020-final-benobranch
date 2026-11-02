@@ -21,6 +21,7 @@ it("serves a join form and HUD containers in the markup", async () => {
   expect(document.querySelector("#player-list")).not.toBeNull();
   expect(document.querySelector("#bump-button")).not.toBeNull();
   expect(document.querySelector("#status")).not.toBeNull();
+  expect(document.querySelector("#lobby-name")).not.toBeNull();
 });
 
 it("serves /app.js as an executable module script", async () => {
