@@ -65,8 +65,25 @@ it("serves the Lobby screen's status/start/HUD controls", async () => {
   expect(document.querySelector("#lobby-status")).not.toBeNull();
   expect(document.querySelector("#start-button")).not.toBeNull();
   expect(document.querySelector("#player-list")).not.toBeNull();
-  expect(document.querySelector("#bump-button")).not.toBeNull();
   expect(document.querySelector("#status")).not.toBeNull();
+});
+
+// ANU-011: a started lobby shows the real map (ANU-010) instead of ANU-005's
+// placeholder counter/bump panel; a waiting lobby shows neither yet. The
+// map panel's markup is always present in the static page (so app.js has
+// something to mount into) but starts hidden — app.js unhides it only once
+// `lobbyState.started` is true (see server/public/app.js's renderLobbyScreen).
+it("serves the Lobby screen's map panel hidden by default, and no counter/bump controls", async () => {
+  const res = await fetch(new URL("/", baseUrl));
+  const dom = new JSDOM(await res.text());
+  const { document } = dom.window;
+
+  const mapPanel = document.querySelector("#map-panel");
+  expect(mapPanel).not.toBeNull();
+  expect(mapPanel?.hasAttribute("hidden")).toBe(true);
+  expect(document.querySelector("#bump-button")).toBeNull();
+  expect(document.querySelector("#count")).toBeNull();
+  expect(document.querySelector("#last-bumped-by")).toBeNull();
 });
 
 it("serves a reachable Options placeholder screen", async () => {

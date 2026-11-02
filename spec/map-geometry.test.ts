@@ -92,17 +92,21 @@ describe("map data route", () => {
 });
 
 describe("map page markup", () => {
-  it("serves the map container, legend and attribution", async () => {
-    const res = await fetch(new URL("/map.html", baseUrl));
+  // ANU-011: the map is no longer its own page — it's embedded (hidden
+  // until a lobby is started) in the lobby screen served from index.html.
+  // See spec/gui.test.ts for the started-vs-waiting visibility behaviour;
+  // this just checks the static scaffolding is actually there to mount into.
+  it("serves the map container, legend and attribution inside the lobby screen", async () => {
+    const res = await fetch(new URL("/", baseUrl));
     expect(res.status).toBe(200);
     const dom = new JSDOM(await res.text());
     const { document } = dom.window;
 
+    expect(document.querySelector("#map-panel")).not.toBeNull();
     expect(document.querySelector("#map-svg")).not.toBeNull();
     expect(document.querySelector("#map-suburbs")).not.toBeNull();
     expect(document.querySelector("#map-data-centers")).not.toBeNull();
     expect(document.querySelector("#map-spawns")).not.toBeNull();
-    expect(document.querySelector("#lobby-size-select")).not.toBeNull();
     expect(document.querySelector("#map-attribution")).not.toBeNull();
     expect(document.querySelector(".map-legend")).not.toBeNull();
   });

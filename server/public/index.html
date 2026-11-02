@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Infrastructure Siege</title>
     <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/map.css" />
   </head>
   <body>
     <div id="status" class="status" data-state="connecting" role="status">Connecting…</div>
@@ -81,11 +82,32 @@
         <button id="start-button" type="button">Start game</button>
       </section>
 
-      <section class="panel">
-        <h2>Shared counter</h2>
-        <p class="metric"><span id="count">0</span></p>
-        <p class="subtle">last bumped by <span id="last-bumped-by">nobody yet</span></p>
-        <button id="bump-button">Bump</button>
+      <section id="map-panel" class="panel map-panel" hidden>
+        <header class="hud-bar">
+          <span class="hud-bar__title">Canberra</span>
+        </header>
+        <div id="map-container" class="map-container">
+          <svg
+            id="map-svg"
+            class="map-svg"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="xMidYMid meet"
+            role="application"
+            aria-label="Canberra suburb map"
+          >
+            <g id="map-suburbs"></g>
+            <g id="map-data-centers"></g>
+            <g id="map-spawns"></g>
+          </svg>
+          <div id="map-tooltip" class="map-tooltip" hidden></div>
+        </div>
+        <footer class="map-legend">
+          <span class="legend-item"><span class="legend-dot legend-dot--mega"></span>Mega data center</span>
+          <span class="legend-item"><span class="legend-dot legend-dot--major"></span>Major data center</span>
+          <span class="legend-item"><span class="legend-dot legend-dot--standard"></span>Standard data center</span>
+          <span class="legend-item"><span class="legend-dot legend-dot--spawn"></span>Spawn ring</span>
+        </footer>
+        <p id="map-attribution" class="map-attribution"></p>
       </section>
 
       <section class="panel">
