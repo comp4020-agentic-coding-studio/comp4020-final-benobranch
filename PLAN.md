@@ -56,12 +56,22 @@ specifically wants:
 - A player's **path to a data center** = a contiguous chain of owned,
   road-adjacent suburbs from their home base to that data center's suburb.
 
-### Data centers
-- A handful of fixed suburbs (e.g. based loosely on real Canberra data
-  infrastructure / business park locations — Hume, Fyshwick, Civic, Bruce)
-  host a data center each.
-- Each has a **power score in TFLOPS** (fixed per data center, maybe variable
-  over time/seasons later).
+### Data centers (decided, see "Players & spawn balance" for the numbers)
+- **32 fixed data centers in three power tiers**, not a handful of equal
+  ones — real Canberra locations host stronger data centers, per the brief
+  that key locations should be worth fighting over:
+  - **5 mega** (100 TFLOPS): City (Civic), Kingston, Fyshwick — the
+    real-world business/infrastructure cluster the fiction is built
+    around — plus Belconnen and Phillip (Woden) as geographic
+    counterweights, so the strongest tier isn't clustered in one corner.
+  - **10 major** (40 TFLOPS): Gungahlin and Greenway (Tuggeranong) — the
+    counterweight candidates that didn't become mega — plus 8 curated real
+    town/group centres and business precincts (Weston Creek, Dickson,
+    Braddon, Bruce, Mitchell, Hume, Pialligo, Symonston), so every district
+    has at least one strong data center.
+  - **17 standard** (15 TFLOPS): spread across the remaining suburbs.
+- Each has a **power score in TFLOPS**, fixed per data center (not
+  per-season variable, for v1).
 - **Connected (cable) vs disconnected (air):** if you hold a live path to a
   data center, you draw its full TFLOPS at full speed. If you don't, you can
   still reach it remotely but at a steep multiplier penalty (the "advanced
@@ -98,45 +108,74 @@ dystopia comes more from the premise (AI already won, humans are fighting
 over its scraps) than from maximalist visual noise — keep it legible at
 phone width per the marker constraints below.
 
-## Players & spawn balance (decided)
+## Players & spawn balance (decided — revised after [[ANU-006]]'s spike)
 
-- **Fixed factions, not open join.** The map has a small, fixed roster of
-  factions (count TBD — see Open decisions), each with one pre-placed home
-  base. A visitor joins by taking an unclaimed faction (or the one with the
-  fewest active players, if we ever allow >1 person per faction — TBD); they
-  don't spawn a new base wherever they happen to show up. This is what makes
-  "no spawn has an advantage" a property we can actually guarantee, rather
-  than one that depends on join order or luck.
-- **Balance metric: equal shortest-hop distance to every data center.** For
-  each data center, every faction's home base should be the same number of
-  road-adjacency hops away (or as close to equal as the real graph allows —
-  Canberra won't be perfectly symmetric). This is computed **once, offline,
-  during map preprocessing**: search candidate home-base suburbs and pick the
-  set that minimises the variance in hop-distance-to-each-data-center across
-  factions. Chosen over "equal reachable TFLOPS" (more accurate but more
-  complex to justify) and "equal local connectivity" (simpler but ignores
-  the resource — data center access — that actually matters).
-- **This also settles data center placement.** Rather than picking data
-  center suburbs for real-world flavour (an actual business park) and hoping
-  spawns balance around them, placement is **balance-driven first**: data
-  center suburbs and faction home-base suburbs are chosen *together* by the
-  same preprocessing search, so the configuration is symmetric by
-  construction. Real-world flavour becomes a tie-breaker — if multiple
-  balanced configurations exist, prefer the one that lands a data center on
-  a real Canberra business-park/infrastructure suburb (Hume, Fyshwick, etc.)
-  — not the primary driver.
+The original plan here (a small fixed faction roster, equal hop-distance to
+every data center) is **superseded**. Mid-spike, the brief's actual game
+design wanted something different: a variable-size lobby, many data centers
+of differing power, and "no spawn way better" rather than exact symmetry.
+`scripts/map/balance_search.py` (the old exact-equidistance search) is kept
+as process evidence; `scripts/map/build_lobby_config.py` is what's live now.
+
+- **Lobby-based games, not fixed factions.** A game has **4–12 players**,
+  minimum 4 to start, no late join once a game begins. The real, scheduled
+  game starts **Sunday 5pm Australia/Sydney**; players queue in a lobby
+  beforehand. Because that schedule means the marker (who may be alone,
+  testing with two incognito windows, any day of the week) could otherwise
+  never start a game, a lobby with fewer than 4 humans at kickoff is
+  **filled with bots** up to the minimum — the weekly Sunday lobby is the
+  "real" competitive game, marking/testing always has a path to 4+ players
+  on demand.
+- **Data centers are fixed across lobbies** (see "Data centers" above);
+  **spawns are computed per lobby** from its player count, not baked into
+  the map. The original idea — fan spawns at literal `360/N` degree
+  intervals around the map — doesn't work geometrically: urban Canberra is
+  roughly twice as long north–south as east–west, so equal compass sectors
+  leave some directions (the east, which is mostly airport/NSW border) with
+  no suburb in them once N gets past about 8. Instead, spawns are spaced
+  evenly (by rotating a start offset) along a **ring** of suburbs at
+  **4–6 road-hops from the map's "hop-center"** (the suburb minimising
+  worst-case hop-distance to everywhere else — computed to be Acton) — same
+  visual effect as a fan around the outside of the map, parameterised by
+  the real road graph's shape instead of raw compass bearing.
+- **Balance metric: bounded soft-access-score imbalance, not equidistance.**
+  With three data-center power tiers, "equal hop-distance to every DC"
+  stopped being meaningful (being equidistant from a mega and a standard DC
+  isn't equal access). Instead each spawn gets a **soft access score** =
+  Σ over all data centers of `tflops × 0.5^hop_distance` — rewards nearby
+  *and* powerful data centers, decaying smoothly with distance. For each
+  lobby size, the spawn rotation minimising the **max/min score ratio**
+  across players is chosen, subject to a hard floor of ≥2 hops pairwise
+  separation between spawns. Measured worst case across all lobby sizes
+  4–12: **~2.7×** (typical/smaller lobbies, e.g. the 4-player bot-filled
+  marker case, are tighter — ~1.8×). Confirmed acceptable against "doesn't
+  need to be 100% balanced, just no spawn way better than others" rather
+  than chasing exact symmetry.
+- **Known artifact:** the "ACT Remainder" tiles (large rural/bushland buffer
+  suburbs — Cotter River, Rendezvous Creek, Tuggeranong-remainder, etc.) are
+  kept as real (ownable, ABS SAL) graph nodes rather than dropped, since
+  dropping them would reintroduce the gaps/overlaps the whole point of
+  using ABS SAL data was to avoid (see "Map data" below). They're excluded
+  from spawn- and data-center-candidacy, but still traversable for
+  adjacency/corridor purposes — i.e. **wilderness tiles are ownable but
+  hold no data center and can't host a spawn.** One side-effect: the large
+  multi-hundred-km² Tuggeranong-remainder tile borders 16 real suburbs,
+  acting as a high-degree hub in the hop graph; this is a known artifact of
+  real Canberra's geography (a genuinely enormous rural buffer), not a bug,
+  but worth flagging if hop-distances there look surprising.
 - Since this is computed once and baked in with the rest of the map graph
   (see "Map data" below), it costs nothing at runtime and is something we
   can point to directly in `README.md`/`spec/` as an enforced ("checked")
-  claim rather than just an asserted design intention — e.g. a test that
-  loads the baked map and asserts the hop-distance variance across spawns is
-  within some tolerance.
+  claim rather than just an asserted design intention —
+  `spec/map-balance.test.ts` loads the baked map, recomputes BFS hop
+  distances and soft-access scores from scratch (not from precomputed
+  numbers in the file), and asserts the agreed bound for every lobby size.
 
 ## How it still meets the brief
 
 | Requirement | How |
 |---|---|
-| Multi-user | Every visitor joins the shared Canberra map by taking one of the fixed factions |
+| Multi-user | Every visitor joins a lobby (4–12 players, bot-filled to the minimum if needed); the weekly game starts Sunday 5pm Australia/Sydney |
 | Real-time | Server-authoritative; attacks, ownership changes and TFLOPS flows broadcast to all open sessions (target: under 1s) |
 | Persists | One long-running world on the `/data` volume; seasons archived |
 | Co-presence | Corridors can be cut by someone else acting *right now* — the whole compute-routing mechanic only has teeth because other players are live on the board |
@@ -153,43 +192,67 @@ dependency. Preprocessed once into a baked suburb-adjacency-and-road graph
 that ships in the repo.
 
 - **Suburb polygons (the tiles): ABS SAL ("Suburbs and Localities") boundary
-  dataset**, Edition 4 (2026, GDA2020), GeoPackage/Shapefile, CC BY 4.0. Chosen
-  over ACT Gov/Geoscape's own boundaries (same underlying data lineage)
-  because ABS SAL is built with guaranteed no gaps/overlaps nationwide —
-  the property that matters most for a tiling game, where every square
-  metre of the map needs to belong to exactly one suburb, never zero or two.
-- **Road network: OpenStreetMap**, via a Geofabrik "New South Wales (with ACT
-  and JBT)" `.osm.pbf` extract, clipped down to the ACT boundary (ACT isn't
-  split out separately at Geofabrik) using Osmium/osmconvert. ODbL license —
-  free, redistribution-friendly for derived facts like a road-adjacency
-  graph; needs attribution. **Do not use OSM's own suburb/locality
-  boundaries** — they're informal and community-drawn for Canberra,
-  inconsistent with the official ABS data used for the tiles themselves.
-- Adjacency between two suburbs = they share a road connection in the OSM
-  extract, not just a shared polygon border (see "Map & territory" above) —
-  this is computed once in preprocessing, not at runtime.
+  dataset**, Edition 3 (2021, GDA2020), CC BY 4.0, fetched via ABS's own
+  ArcGIS REST endpoint (`geo.abs.gov.au/arcgis/rest/services/ASGS2021/SAL`,
+  filtered to `state_code_2021='8'`) rather than downloading the national
+  GeoPackage/Shapefile — same data, simpler one-time fetch for an ACT-only
+  subset ([[ANU-006]], `scripts/map/fetch_suburbs.py`). Chosen over ACT
+  Gov/Geoscape's own boundaries (same underlying data lineage) because ABS
+  SAL is built with guaranteed no gaps/overlaps nationwide — the property
+  that matters most for a tiling game, where every square metre of the map
+  needs to belong to exactly one suburb, never zero or two. 136 ACT
+  suburb/locality polygons (2 non-geographic rows — "No usual address",
+  "Migratory" — dropped; they have no geometry).
+- **Road network: OpenStreetMap**, fetched live via the Overpass API
+  ([[ANU-006]], `scripts/map/fetch_roads.py`) rather than a Geofabrik
+  `.osm.pbf` extract + Osmium — a direct bounding-box query for a
+  `highway=*` whitelist (motorway down to residential/living_street,
+  excluding footway/cycleway/path/track/service, which would wrongly
+  reconnect suburbs split by a lake or reserve) was simpler for an
+  ACT-sized area and avoids the extra offline-conversion tooling. ODbL
+  license — free, redistribution-friendly for derived facts like a
+  road-adjacency graph; needs attribution. **Do not use OSM's own
+  suburb/locality boundaries** — they're informal and community-drawn for
+  Canberra, inconsistent with the official ABS data used for the tiles
+  themselves.
+- Adjacency between two suburbs = a road segment's consecutive points fall
+  in different suburb polygons (STRtree point-in-polygon lookup, with a
+  ~1m boundary-snap tolerance and a hard break — not a skip — on any point
+  falling outside the ACT boundary, so a road that dips into NSW/Queanbeyan
+  can't fabricate an edge between two ACT suburbs not actually linked
+  inside ACT) — computed once in preprocessing
+  (`scripts/map/build_adjacency.py`), not at runtime.
+- **Large rural "ACT Remainder" tiles are kept as real graph nodes, not
+  dropped or contracted** — see "Players & spawn balance" for why, and for
+  the contraction approach that was tried and abandoned (spurious
+  long-hop edges between suburbs that only share a scattered reserve
+  polygon, not an actual road).
 - **Scope: all ACT suburbs**, not a curated subset. More suburbs than
   originally planned (~100+ vs. the 20–40 the original generic plan assumed)
   — raises the bar on keeping the UI legible at phone width (see Marker
   constraints) and on making sure the preprocessing pipeline (not hand
   layout) is doing the heavy lifting, since hand-curating ~100+ tiles isn't
   viable in a week.
+- **Baked output:** `scripts/map/data/map.json` — the adjacency graph (139
+  nodes incl. split multi-part remainder tiles, 317 edges), the 32 data
+  centers with tiers/power, the per-lobby-size spawn table, and the search
+  parameters, with source attribution. `scripts/map/build_lobby_config.py`
+  regenerates it from the raw ABS/OSM fetches.
 
 ## Open decisions
 
+**Resolved by [[ANU-006]]'s preprocessing spike:**
+- ~~Faction count~~ → superseded by the lobby model: **4–12 players per
+  game**, not a fixed faction count (see "Players & spawn balance").
+- ~~Number of data centers~~ → **32**, in 3 power tiers (see "Data
+  centers").
+
 **World-building / scope (new, from this session):**
-- **Faction count.** How many fixed factions/home bases — 4 (one per
-  compass-ish quadrant of the map) is the obvious starting guess, but it
-  needs checking against the actual balance search: can the real ACT road
-  graph even support N equally-balanced spawns for a given N and a given
-  number/placement of data centers? Fewer factions is easier to balance
-  perfectly; more factions is more interesting for co-presence (more
-  simultaneous actors, which is the thing the brief rewards) but harder to
-  keep fair. Needs the preprocessing spike to answer with real numbers
-  rather than guessing.
-- **Number of data centers**, similarly — tied to the same balance search as
-  faction count, not a separate decision.
-- **Faction framing.** Are players literally "the AI's competing
+- **Lobby lifecycle backend work.** The lobby model (queueing, the Sunday
+  5pm Australia/Sydney start, the 4-player minimum, no late join, bot
+  fill) needs its own implementation — tracked separately, see the issue
+  this spike opened for it.
+- **Player framing within a lobby.** Are players literally "the AI's competing
   franchisees", human resistance cells, corporate remnants, something else?
   Affects naming, unit flavour text, and the README's "good" argument (is
   this satire of AI/compute hype, or a straighter siege game with a skin?).
@@ -215,11 +278,13 @@ that ships in the repo.
 
 - The marker uses **two separate Chrome profiles side by side** (an
   incognito window counts as one of the two), possibly alone, so one person
-  must be able to play as two players/factions and see real-time updates
-  between them. Two incognito windows from the *same* Chrome session are not
-  enough to test this — they share storage with each other, so anything
-  keyed off localStorage (session tokens, "Continue") would wrongly resume
-  as the same player in both.
+  must be able to play as two players in the same lobby and see real-time
+  updates between them. Two incognito windows from the *same* Chrome session
+  are not enough to test this — they share storage with each other, so
+  anything keyed off localStorage (session tokens, "Continue") would wrongly
+  resume as the same player in both. The lobby's remaining slots down to the
+  4-player minimum are bot-filled (see "Players & spawn balance"), so a
+  marker testing with just these two profiles still sees a startable game.
 - The marker returns the **next day after a restart**, so the world (or the
   archived season) must clearly still be there.
 - The game must work at both marking viewports, including narrow ones — a
@@ -235,3 +300,9 @@ that ships in the repo.
 - Simultaneous attacks on the same suburb resolve consistently (units are
   never spent twice).
 - The board, TFLOPS totals and the season archive survive a server restart.
+- **Done ([[ANU-006]]):** `spec/map-balance.test.ts` — the baked map graph
+  is one connected component covering every suburb; all 32 data centers
+  resolve to real (non-wilderness) suburbs; for every lobby size 4–12, the
+  spawn set has the right count, the pairwise hop-separation floor holds,
+  and the recomputed soft-access-score imbalance ratio stays within the
+  agreed bound.
