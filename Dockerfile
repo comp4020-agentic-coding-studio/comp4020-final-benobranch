@@ -19,6 +19,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY server/ ./server/
+COPY scripts/map/data/ ./scripts/map/data/
 COPY README.md ./
 
 ENV PORT=8080

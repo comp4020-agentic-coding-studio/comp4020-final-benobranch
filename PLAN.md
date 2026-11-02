@@ -238,6 +238,13 @@ that ships in the repo.
   centers with tiers/power, the per-lobby-size spawn table, and the search
   parameters, with source attribution. `scripts/map/build_lobby_config.py`
   regenerates it from the raw ABS/OSM fetches.
+- **Geometry ([[ANU-010]]):** `scripts/map/data/map-geometry.json` — the
+  same 139 nodes' polygon boundaries, pre-flattened to SVG path strings
+  (EPSG:7855 projected, y-flipped, topology-simplified so shared suburb
+  borders stay gap/overlap-free) — no client-side projection library
+  needed. `scripts/map/build_geometry.py` regenerates it, reusing
+  `build_adjacency.py`'s exact node-splitting logic so the two files' node
+  sets never drift apart.
 
 ## Open decisions
 
