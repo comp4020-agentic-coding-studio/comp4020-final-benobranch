@@ -10,6 +10,7 @@ import { renderReadmePage } from "./readme-page.ts";
 import { serveStatic } from "./static-files.ts";
 import {
   parseClientMessage,
+  MAX_CAPACITY,
   type LobbySummary,
   type LobbyState,
   type ServerMessage,
@@ -56,6 +57,7 @@ function buildLobbyState(lobby: StoredLobby): LobbyState {
     lobbyId: lobby.lobbyId,
     name: lobby.name,
     capacity: lobby.capacity,
+    started: lobby.started,
     count: lobby.count,
     lastBumpedBy: lobby.lastBumpedBy,
     members: members.map((m) => ({ playerId: m.playerId, name: m.name, online: isOnline(m.playerId) })),
@@ -68,6 +70,7 @@ function buildLobbySummary(lobby: StoredLobby): LobbySummary {
     lobbyId: lobby.lobbyId,
     name: lobby.name,
     capacity: lobby.capacity,
+    started: lobby.started,
     memberCount: members.length,
     onlineCount: members.filter((m) => isOnline(m.playerId)).length,
   };
@@ -75,6 +78,12 @@ function buildLobbySummary(lobby: StoredLobby): LobbySummary {
 
 function send(socket: WebSocket, message: ServerMessage): void {
   if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
+}
+
+function joinErrorMessage(reason: "not-found" | "full" | "started"): string {
+  if (reason === "full") return "that lobby is full";
+  if (reason === "started") return "that game has already started";
+  return "no such lobby";
 }
 
 function broadcastLobbyState(lobbyId: string): void {
@@ -167,14 +176,17 @@ wss.on("connection", (socket) => {
       let lobbyId = store.getCurrentLobbyId(playerId);
       if (!lobbyId) {
         const joined = store.joinLobby(playerId, DEFAULT_LOBBY_ID);
-        if (!joined.ok) {
-          // Default lobby is full — a real capacity ceiling, not expected at
-          // this project's 5+-concurrent-player target but handled rather
-          // than left to crash.
-          socket.close(1013, "no lobby available to join");
-          return;
+        if (joined.ok) {
+          lobbyId = DEFAULT_LOBBY_ID;
+        } else {
+          // Default is full or already started (e.g. someone hit "start" on
+          // it) — a brand-new player always needs *some* lobby, so give them
+          // their own fresh one rather than closing the connection. They can
+          // still browse/join any other open lobby from there.
+          const fresh = store.createLobby(`${message.name}'s lobby`, MAX_CAPACITY);
+          store.joinLobby(playerId, fresh.lobbyId);
+          lobbyId = fresh.lobbyId;
         }
-        lobbyId = DEFAULT_LOBBY_ID;
       }
 
       sockets.set(socket, { playerId, name: message.name, lobbyId, registered: true, watchingLobbies: false });
@@ -214,10 +226,19 @@ wss.on("connection", (socket) => {
       const fromLobbyId = meta.lobbyId;
       const result = store.joinLobby(meta.playerId, message.lobbyId);
       if (!result.ok) {
-        send(socket, { type: "error", message: result.reason === "full" ? "that lobby is full" : "no such lobby" });
+        send(socket, { type: "error", message: joinErrorMessage(result.reason) });
         return;
       }
       moveAllSocketsForPlayer(meta.playerId, fromLobbyId, message.lobbyId);
+      return;
+    }
+
+    if (message.type === "startLobby") {
+      const lobby = store.startLobby(meta.lobbyId);
+      if (lobby) {
+        broadcastLobbyState(meta.lobbyId);
+        broadcastLobbyList(); // the browse list also shows started/not-started
+      }
       return;
     }
 

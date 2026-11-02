@@ -34,6 +34,17 @@ export interface ClientJoinLobby {
   lobbyId: string;
 }
 
+export interface ClientStartLobby {
+  /**
+   * Starts the sender's current lobby (no lobbyId — always "my lobby").
+   * Minimal, hand-triggered stand-in for PLAN.md's real Sunday 5pm
+   * scheduled kickoff + bot-fill, which are out of scope here (see
+   * issues/ANU-009.md) — this just gives the UI a real "started" state to
+   * represent and enforce "no late join" against.
+   */
+  type: "startLobby";
+}
+
 export interface ClientWatchLobbies {
   type: "watchLobbies";
 }
@@ -47,6 +58,7 @@ export type ClientMessage =
   | ClientBump
   | ClientCreateLobby
   | ClientJoinLobby
+  | ClientStartLobby
   | ClientWatchLobbies
   | ClientUnwatchLobbies;
 
@@ -60,6 +72,7 @@ export interface LobbyState {
   lobbyId: string;
   name: string;
   capacity: number;
+  started: boolean;
   count: number;
   lastBumpedBy: string | null;
   members: PlayerPresence[];
@@ -69,6 +82,7 @@ export interface LobbySummary {
   lobbyId: string;
   name: string;
   capacity: number;
+  started: boolean;
   memberCount: number;
   onlineCount: number;
 }
@@ -100,8 +114,11 @@ export type ServerMessage = ServerWelcome | ServerLobbyState | ServerLobbyList |
 const MAX_NAME_LENGTH = 40;
 const MAX_TOKEN_LENGTH = 100;
 const MAX_LOBBY_ID_LENGTH = 64;
-const MIN_CAPACITY = 2;
-const MAX_CAPACITY = 16;
+// PLAN.md "Players & spawn balance" (settled by ANU-006): games are 4-12
+// players, minimum 4 to start. Tightened from ANU-008's placeholder 2-16
+// range now that the real rule has landed.
+export const MIN_CAPACITY = 4;
+export const MAX_CAPACITY = 12;
 
 function isNonEmptyString(value: unknown, maxLength: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= maxLength;
@@ -151,6 +168,10 @@ export function parseClientMessage(raw: string): ClientMessage {
       throw new Error("'joinLobby' requires a non-empty 'lobbyId'");
     }
     return { type: "joinLobby", lobbyId };
+  }
+
+  if (type === "startLobby") {
+    return { type: "startLobby" };
   }
 
   if (type === "watchLobbies") {

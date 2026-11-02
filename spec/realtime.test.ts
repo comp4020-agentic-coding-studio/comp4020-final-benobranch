@@ -122,6 +122,36 @@ it("does not broadcast a lobby's state to a connection in a different lobby", as
   inLobbyB.socket.close();
 });
 
+it("rejects a lobby capacity outside PLAN.md's settled 4-12 range", async () => {
+  const client = await connect("capacity-test");
+  await waitFor(client, (m) => m.type === "welcome");
+  send(client, { type: "createLobby", name: `too-small-${Date.now()}`, capacity: 3 });
+  await new Promise((resolve) => client.socket.once("close", resolve));
+  expect(client.socket.readyState, "a capacity below 4 should close the connection (bad message)").toBe(
+    client.socket.CLOSED,
+  );
+});
+
+it("refuses a new member once a lobby has started (no late join)", async () => {
+  const lobbyName = `no-late-join-${Date.now()}`;
+  const creator = await connect("no-late-join-creator");
+  send(creator, { type: "createLobby", name: lobbyName, capacity: 4 });
+  const created = await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { name: string }).name === lobbyName);
+  const lobbyId = (created.lobby as { lobbyId: string }).lobbyId;
+
+  send(creator, { type: "startLobby" });
+  await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { lobbyId: string; started: boolean }).lobbyId === lobbyId && (m.lobby as { started: boolean }).started);
+
+  const latecomer = await connect("late-joiner");
+  await waitFor(latecomer, (m) => m.type === "welcome");
+  send(latecomer, { type: "joinLobby", lobbyId });
+  const error = await waitFor(latecomer, (m) => m.type === "error");
+  expect((error.message as string).toLowerCase()).toContain("started");
+
+  creator.socket.close();
+  latecomer.socket.close();
+});
+
 it("updates a watching connection's lobby list when a new lobby is created", async () => {
   const watcher = await connect("list-watcher");
   send(watcher, { type: "watchLobbies" });

@@ -21,6 +21,7 @@ export interface StoredLobby {
   lobbyId: string;
   name: string;
   capacity: number;
+  started: boolean;
   count: number;
   lastBumpedBy: string | null;
 }
@@ -37,7 +38,7 @@ export interface ResolvedPlayer {
 
 export type JoinLobbyResult =
   | { ok: true; lobby: StoredLobby }
-  | { ok: false, reason: "not-found" | "full" };
+  | { ok: false; reason: "not-found" | "full" | "started" };
 
 export interface Store {
   resolvePlayer(name: string, token: string | undefined): ResolvedPlayer;
@@ -47,6 +48,7 @@ export interface Store {
   listLobbies(): StoredLobby[];
   createLobby(name: string, capacity: number): StoredLobby;
   joinLobby(playerId: string, lobbyId: string): JoinLobbyResult;
+  startLobby(lobbyId: string): StoredLobby | null;
   bump(lobbyId: string, playerName: string): StoredLobby | null;
   close(): void;
 }
@@ -74,11 +76,11 @@ export function openStore(dbPath: string): Store {
     "SELECT lobby_id AS lobbyId FROM lobby_members WHERE player_id = ?",
   );
   const selectLobby = db.prepare(`
-    SELECT id AS lobbyId, name, capacity, count, last_bumped_by AS lastBumpedBy
+    SELECT id AS lobbyId, name, capacity, started, count, last_bumped_by AS lastBumpedBy
     FROM lobbies WHERE id = ?
   `);
   const selectAllLobbies = db.prepare(`
-    SELECT id AS lobbyId, name, capacity, count, last_bumped_by AS lastBumpedBy
+    SELECT id AS lobbyId, name, capacity, started, count, last_bumped_by AS lastBumpedBy
     FROM lobbies ORDER BY rowid
   `);
   const selectMembers = db.prepare(`
@@ -88,8 +90,8 @@ export function openStore(dbPath: string): Store {
   `);
   const countMembers = db.prepare("SELECT COUNT(*) AS n FROM lobby_members WHERE lobby_id = ?");
   const insertLobby = db.prepare(`
-    INSERT INTO lobbies (id, name, capacity, count, last_bumped_by, updated_at)
-    VALUES (?, ?, ?, 0, NULL, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    INSERT INTO lobbies (id, name, capacity, started, count, last_bumped_by, updated_at)
+    VALUES (?, ?, ?, 0, 0, NULL, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `);
   // player_id is the lobby_members primary key, so a player can only ever be
   // in one lobby at a time: INSERT OR REPLACE on it IS the "move to a
@@ -102,9 +104,15 @@ export function openStore(dbPath: string): Store {
     SET count = count + 1, last_bumped_by = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE id = ?
   `);
+  const updateStart = db.prepare(`
+    UPDATE lobbies SET started = 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?
+  `);
 
+  // SQLite has no boolean type — `started` is stored as 0/1 and converted
+  // at the store boundary so nothing above this file deals with integers.
   function readLobby(lobbyId: string): StoredLobby | null {
-    return (selectLobby.get(lobbyId) as StoredLobby | undefined) ?? null;
+    const row = selectLobby.get(lobbyId) as (Omit<StoredLobby, "started"> & { started: number }) | undefined;
+    return row ? { ...row, started: row.started !== 0 } : null;
   }
 
   return {
@@ -134,7 +142,8 @@ export function openStore(dbPath: string): Store {
     },
 
     listLobbies() {
-      return selectAllLobbies.all() as unknown as StoredLobby[];
+      const rows = selectAllLobbies.all() as unknown as (Omit<StoredLobby, "started"> & { started: number })[];
+      return rows.map((row) => ({ ...row, started: row.started !== 0 }));
     },
 
     createLobby(name, capacity) {
@@ -150,13 +159,26 @@ export function openStore(dbPath: string): Store {
       if (!lobby) return { ok: false, reason: "not-found" };
 
       const alreadyMember = selectCurrentLobbyId.get(playerId) as { lobbyId: string } | undefined;
-      if (alreadyMember?.lobbyId !== lobbyId) {
+      const isNewMember = alreadyMember?.lobbyId !== lobbyId;
+
+      // "No late join once a game begins" (PLAN.md, settled by ANU-006): a
+      // started lobby only still accepts its own existing members (e.g. a
+      // reconnect), never a new one.
+      if (isNewMember && lobby.started) return { ok: false, reason: "started" };
+
+      if (isNewMember) {
         const { n } = countMembers.get(lobbyId) as { n: number };
         if (n >= lobby.capacity) return { ok: false, reason: "full" };
       }
 
       upsertMembership.run(lobbyId, playerId);
       return { ok: true, lobby };
+    },
+
+    startLobby(lobbyId) {
+      const result = updateStart.run(lobbyId);
+      if (result.changes === 0) return null;
+      return readLobby(lobbyId);
     },
 
     bump(lobbyId, playerName) {
@@ -215,13 +237,31 @@ function migrate(db: DatabaseSync): void {
 
       // A fresh boot with an empty database still has one lobby to show on
       // Server Browse / auto-join new players into, so two marker windows
-      // land in the same place with no out-of-band coordination.
+      // land in the same place with no out-of-band coordination. Capacity
+      // 12 (not 16) even here, now that v2 below tightens the column's
+      // valid range to PLAN.md's real 4-12 rule.
       db.prepare(
         `INSERT OR IGNORE INTO lobbies (id, name, capacity, count, last_bumped_by, updated_at)
-         VALUES (?, 'Default', 16, 0, NULL, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
+         VALUES (?, 'Default', 12, 0, NULL, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
       ).run(DEFAULT_LOBBY_ID);
 
       db.exec("PRAGMA user_version = 1");
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
+  // v2 (ANU-009): "no late join once a game begins" (PLAN.md, settled by
+  // ANU-006) needs a lobby to carry started/not-started state. Existing
+  // lobbies default to not-started (0) — they were created before this
+  // column existed, i.e. before anything could have "started" them.
+  if (version < 2) {
+    db.exec("BEGIN");
+    try {
+      db.exec("ALTER TABLE lobbies ADD COLUMN started INTEGER NOT NULL DEFAULT 0");
+      db.exec("PRAGMA user_version = 2");
       db.exec("COMMIT");
     } catch (err) {
       db.exec("ROLLBACK");
