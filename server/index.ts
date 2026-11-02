@@ -19,6 +19,9 @@ const PORT = Number(process.env.PORT ?? 8080);
 const DATA_DIR = process.env.DATA_DIR ?? "/data";
 const README_PATH = process.env.README_PATH ?? "README.md";
 const PUBLIC_DIR = process.env.PUBLIC_DIR ?? "server/public";
+// Baked map data (scripts/map/build_lobby_config.py, build_geometry.py) —
+// read-only reference data, not part of DATA_DIR's mutable game state.
+const MAP_DATA_DIR = process.env.MAP_DATA_DIR ?? "scripts/map/data";
 
 const store = openStore(`${DATA_DIR}/game.db`);
 
@@ -113,6 +116,18 @@ const server = createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(renderReadmePage(readme));
     return;
+  }
+
+  // Baked map graph + geometry (ANU-006, ANU-010) — static reference data,
+  // served from its own root rather than copied into server/public so the
+  // one baked file isn't duplicated on disk.
+  if (pathname === "/map/map.json" || pathname === "/map/map-geometry.json") {
+    const file = serveStatic(MAP_DATA_DIR, pathname.replace(/^\/map/, ""));
+    if (file) {
+      res.writeHead(file.status, { "Content-Type": file.contentType });
+      res.end(file.body);
+      return;
+    }
   }
 
   const file = serveStatic(PUBLIC_DIR, pathname);
