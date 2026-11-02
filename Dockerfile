@@ -1,18 +1,30 @@
 # syntax = docker/dockerfile:1
 
-# A placeholder, and yours to replace: it serves one page, plus README.md
-# verbatim at /readme/, which is enough to prove the deploy path end to end.
-# Whatever your app is built with, the image that replaces this one must serve
-# HTTP on 0.0.0.0:$PORT (fly.toml sets PORT) and publish README.md at /readme/
-# (spec/README.md says what's checked).
+# Node server (server/) replaces the busybox placeholder. It serves HTTP on
+# 0.0.0.0:$PORT (fly.toml sets PORT), publishes README.md verbatim at
+# /readme/ (spec/README.md says what's checked), and persists game state to
+# a SQLite file under DATA_DIR (fly.toml mounts the volume at /data).
+#
+# Pinned to the node version mise.toml pins for local dev, so "works on my
+# machine" and "works in the image" mean the same node.
 
-FROM docker.io/library/busybox:1.38.0
-COPY placeholder/ /src/
-COPY README.md /src/
-# README.md goes into the page as-is, HTML-escaped, in place of @README@;
-# rendering it properly is your app's job
-RUN mkdir -p /site/readme \
-    && cp /src/index.html /site/ \
-    && sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' /src/README.md > /src/body \
-    && sed -e '/@README@/{r /src/body' -e 'd}' /src/readme.html > /site/readme/index.html
-CMD ["sh", "-c", "exec httpd -f -p 0.0.0.0:${PORT:-8080} -h /site"]
+FROM docker.io/library/node:24.21.0-slim AS deps
+WORKDIR /app
+RUN corepack enable
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile --prod
+
+FROM docker.io/library/node:24.21.0-slim
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json ./
+COPY server/ ./server/
+COPY README.md ./
+
+ENV PORT=8080
+ENV DATA_DIR=/data
+
+# SQLite and type-stripping are both stable in 24.x but still log an
+# experimental-feature warning on every boot; silenced so it doesn't clutter
+# the logs read live at the week-11 crit.
+CMD ["node", "--disable-warning=ExperimentalWarning", "server/index.ts"]

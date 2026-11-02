@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en-AU">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Backend skeleton</title>
+  </head>
+  <body>
+    <main>
+      <h1>Backend skeleton</h1>
+      <p>
+        This proves multi-user, real-time and persistence before any game
+        rule exists. See <a href="/readme/">/readme/</a> for the app's
+        definition of good.
+      </p>
+      <p>Name: <input id="name" placeholder="your name" /> <button id="join">Join</button></p>
+      <p>Count: <span id="count">-</span> <button id="bump" disabled>Bump</button></p>
+      <p>Last bumped by: <span id="lastBumpedBy">-</span></p>
+      <p>Online: <span id="players">-</span></p>
+    </main>
+    <script>
+      const ws = new WebSocket(`${location.origin.replace(/^http/, "ws")}/ws`);
+      const countEl = document.getElementById("count");
+      const lastEl = document.getElementById("lastBumpedBy");
+      const playersEl = document.getElementById("players");
+      const bumpBtn = document.getElementById("bump");
+
+      ws.addEventListener("message", (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "welcome") {
+          countEl.textContent = msg.count;
+          playersEl.textContent = msg.players.map((p) => p.name).join(", ");
+          bumpBtn.disabled = false;
+        } else if (msg.type === "counter") {
+          countEl.textContent = msg.count;
+          lastEl.textContent = msg.lastBumpedBy ?? "-";
+        } else if (msg.type === "presence") {
+          playersEl.textContent = msg.players.map((p) => p.name).join(", ");
+        }
+      });
+
+      document.getElementById("join").addEventListener("click", () => {
+        const name = document.getElementById("name").value || "anon";
+        ws.send(JSON.stringify({ type: "hello", name }));
+      });
+
+      bumpBtn.addEventListener("click", () => {
+        ws.send(JSON.stringify({ type: "bump" }));
+      });
+    </script>
+  </body>
+</html>
