@@ -1,0 +1,227 @@
+/* Dark, high-contrast HUD chrome over a surveilled-infrastructure tone
+   (PLAN.md "Art direction"): a near-black base, a single cyan accent for
+   ownership/state, sharp system sans-serif. No cyberpunk-pastiche clutter —
+   the tone comes from the premise, not maximalist visual noise. System
+   fonts only, so a slow connection never blocks rendering on a CDN font. */
+:root {
+  --bg: #0a0d10;
+  --panel: #12171b;
+  --border: #223038;
+  --text: #e6f1f5;
+  --text-dim: #8fa3ad;
+  --accent: #38e0c8;
+  --accent-dim: #1f7a6c;
+  --danger: #e05b4f;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+}
+
+body {
+  min-height: 100vh;
+  padding-top: 2.5rem; /* clears the fixed status bar */
+}
+
+a {
+  color: var(--accent);
+}
+
+h1,
+h2 {
+  margin: 0 0 0.5rem;
+  letter-spacing: 0.02em;
+}
+
+h1 {
+  font-size: 1.5rem;
+  text-transform: uppercase;
+}
+
+h2 {
+  font-size: 0.95rem;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.status {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  padding: 0.4rem 1rem;
+  font-size: 0.8rem;
+  text-align: center;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.status[data-state="connecting"] {
+  background: #4a3a10;
+  color: #f0c84a;
+}
+
+.status[data-state="connected"] {
+  background: var(--accent-dim);
+  color: #d9fff7;
+}
+
+.status[data-state="disconnected"] {
+  background: var(--danger);
+  color: #fff;
+}
+
+.screen {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* The browser's default `[hidden] { display: none }` UA-stylesheet rule has
+   the same specificity as .screen above and loses the cascade tie-break
+   (this stylesheet loads after the UA one), so it has to be restated here
+   explicitly or a "hidden" screen still renders. */
+.screen[hidden] {
+  display: none;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.25rem;
+}
+
+.tagline {
+  color: var(--text-dim);
+  margin-top: 0;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+input {
+  font-family: inherit;
+  font-size: 1rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+}
+
+input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+button {
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  background: var(--accent);
+  color: #05201c;
+  border: none;
+  border-radius: 6px;
+  padding: 0.7rem 1rem;
+  cursor: pointer;
+  letter-spacing: 0.03em;
+}
+
+button:disabled {
+  background: var(--border);
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+button:not(:disabled):hover {
+  background: #4cf0d6;
+}
+
+.hud-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0 0.25rem;
+}
+
+.hud-bar__title {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 1.1rem;
+}
+
+.hud-bar__count {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.metric {
+  font-size: 3rem;
+  font-weight: 700;
+  color: var(--accent);
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.subtle {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  margin: 0.25rem 0 1rem;
+}
+
+.player-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.player-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.player-list li.self {
+  border-color: var(--accent-dim);
+}
+
+.player-list__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}

@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { WebSocketServer, type WebSocket } from "ws";
 import { openStore } from "./store.ts";
 import { renderReadmePage } from "./readme-page.ts";
+import { serveStatic } from "./static-files.ts";
 import {
   parseClientMessage,
   type PlayerSummary,
@@ -17,6 +18,7 @@ import {
 const PORT = Number(process.env.PORT ?? 8080);
 const DATA_DIR = process.env.DATA_DIR ?? "/data";
 const README_PATH = process.env.README_PATH ?? "README.md";
+const PUBLIC_DIR = process.env.PUBLIC_DIR ?? "server/public";
 
 const store = openStore(`${DATA_DIR}/game.db`);
 
@@ -49,24 +51,52 @@ function broadcast(message: ServerMessage, exclude?: WebSocket): void {
 }
 
 const server = createServer((req, res) => {
-  if (req.url === "/" || req.url === "/index.html") {
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(readFileSync("server/public/index.html"));
-    return;
-  }
-  if (req.url === "/readme/") {
+  const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+
+  if (pathname === "/readme/") {
     const readme = readFileSync(README_PATH, "utf8");
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(renderReadmePage(readme));
     return;
   }
+
+  const file = serveStatic(PUBLIC_DIR, pathname);
+  if (file) {
+    res.writeHead(file.status, { "Content-Type": file.contentType });
+    res.end(file.body);
+    return;
+  }
+
   res.writeHead(404, { "Content-Type": "text/plain" });
   res.end("not found");
 });
 
 const wss = new WebSocketServer({ server, path: "/ws" });
 
+// A dropped wifi connection or a sleeping phone doesn't fire a 'close' event
+// until TCP eventually times out (minutes), which would leave a ghost entry
+// in the "online" list long after that player is actually gone. Pinging
+// every connection and terminating ones that didn't pong since the last
+// check catches this — see the `ws` README's "how to detect and close
+// broken connections" recipe.
+const alive = new WeakSet<WebSocket>();
+
+const heartbeat = setInterval(() => {
+  for (const client of wss.clients) {
+    if (!alive.has(client)) {
+      client.terminate();
+      continue;
+    }
+    alive.delete(client);
+    client.ping();
+  }
+}, 30_000);
+heartbeat.unref();
+
 wss.on("connection", (socket) => {
+  alive.add(socket);
+  socket.on("pong", () => alive.add(socket));
+
   // Identity for this skeleton is just "whoever connected with this socket" —
   // an anonymous visitor, matching the brief's "what counts as a person is
   // your call". Later subsystems can replace this with cookies/accounts
@@ -130,6 +160,7 @@ server.listen(PORT, "0.0.0.0", () => {
 // redeploying; close the db cleanly so WAL checkpoints rather than leaving a
 // stale -wal file for the next boot to replay.
 function shutdown(): void {
+  clearInterval(heartbeat);
   server.close();
   store.close();
   process.exit(0);
