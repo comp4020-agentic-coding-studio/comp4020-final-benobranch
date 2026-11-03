@@ -16,6 +16,15 @@
 // served read-only under /map/ by server/index.ts. Suburbs join across the
 // two files by `sal_code`; data centers and spawns join to a suburb by
 // `name` (map.json has no sal_code on data_centers/spawn entries).
+//
+// ANU-020 adds three composed layer functions (renderOwnership/renderUnits/
+// renderFactories, per ANU-013's file-layout convention) plus an `onSelect`
+// callback on mountMap so app.js/sidebar.js can react to a tap on a suburb,
+// unit or factory. None of the three diff against prior state — same
+// full-redraw-on-broadcast precedent renderSpawns already uses — since
+// nothing they touch resets the viewBox.
+import { unitVisual } from "./unit-visual.js";
+import { factoryVisual } from "./factory-visual.js";
 
 /**
  * @typedef {{idx: number, sal_code: string, name: string, is_remainder: boolean}} MapSuburb
@@ -35,12 +44,19 @@
  *   urban_view_box: ViewBox,
  *   source_attribution: Record<string, string>,
  * }} MapGeometry
+ * @typedef {import("../protocol.ts").PlayerPresence} PlayerPresence
+ * @typedef {import("../protocol.ts").OccupantUnit} OccupantUnit
+ * @typedef {import("../protocol.ts").FactoryState} FactoryState
+ * @typedef {import("../protocol.ts").UnitTypeCatalogEntry} UnitTypeCatalogEntry
+ * @typedef {{type: "suburb", sal_code: string} | {type: "unit", unitId: string} | {type: "factory", factoryId: string} | null} MapSelection
  */
 
 const svg = /** @type {SVGSVGElement} */ (/** @type {unknown} */ (document.getElementById("map-svg")));
 const suburbsLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-suburbs")));
 const dcLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-data-centers")));
 const spawnLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-spawns")));
+const unitsLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-units")));
+const factoriesLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-factories")));
 const tooltip = /** @type {HTMLElement} */ (document.getElementById("map-tooltip"));
 const container = /** @type {HTMLElement} */ (document.getElementById("map-container"));
 const attributionEl = /** @type {HTMLElement} */ (document.getElementById("map-attribution"));
@@ -88,6 +104,22 @@ let initialised = false;
 // every time the lobby screen re-renders, not just once.
 let mountedLobbyId = /** @type {string | null} */ (null);
 let currentLobbySize = "";
+
+/** @type {(selection: MapSelection) => void} */
+let onSelect = () => {};
+
+/** Keyed by unit_types.key — needed for unitVisual's maxHealth param. Set once via setUnitCatalog. */
+let unitTypesByKey = /** @type {Map<string, UnitTypeCatalogEntry>} */ (new Map());
+
+/**
+ * app.js calls this once a `unitCatalog` message arrives — independent of
+ * mountMap/unmountMap since the catalog is global reference data, not
+ * per-lobby state.
+ * @param {UnitTypeCatalogEntry[]} unitTypes
+ */
+export function setUnitCatalog(unitTypes) {
+  unitTypesByKey = new Map(unitTypes.map((t) => [t.key, t]));
+}
 
 function cleanLabel(/** @type {string} */ name) {
   return name.replace(/ \(ACT\)$/, "").replace(/^ACT Remainder - (.+?)(?: \[part \d+\])?$/, "Wilderness: $1");
@@ -179,8 +211,11 @@ function renderSpawns(/** @type {string} */ lobbySize) {
  * abstract size picker.
  * @param {string} lobbyId
  * @param {number} capacity
+ * @param {(selection: MapSelection) => void} [selectCallback] - fired on
+ *   every tap (a suburb, a unit/factory icon, or null on deselect) — ANU-020.
  */
-export async function mountMap(lobbyId, capacity) {
+export async function mountMap(lobbyId, capacity, selectCallback) {
+  if (selectCallback) onSelect = selectCallback;
   const { mapData: data, geometry } = await loadMapData();
   mapData = data;
   initOnce(data, geometry);
@@ -192,6 +227,88 @@ export async function mountMap(lobbyId, capacity) {
 /** Clears mount state so a later mountMap() for a different lobby redraws the spawn ring. */
 export function unmountMap() {
   mountedLobbyId = null;
+}
+
+/**
+ * Colors the existing `.suburb` paths by owner (ANU-020) — leaves the
+ * reserved `#map-ownership` layer (ANU-017's diagonal-stripe contest
+ * visuals) untouched. Full redraw on every call: resetting a fill/class on
+ * an already-existing permanent path element doesn't touch the viewBox, so
+ * there's no pan/zoom-preserving diffing needed here.
+ * @param {Record<string, string>} ownership - sal_code -> owner playerId, sparse
+ * @param {PlayerPresence[]} members
+ */
+export function renderOwnership(ownership, members) {
+  const colorByPlayerId = new Map(members.map((m) => [m.playerId, m.color]));
+  for (const path of suburbsLayer.querySelectorAll("path")) {
+    const salCode = /** @type {SVGPathElement} */ (path).dataset.salCode;
+    const ownerPlayerId = salCode ? ownership[salCode] : undefined;
+    const color = ownerPlayerId ? colorByPlayerId.get(ownerPlayerId) : undefined;
+    if (color) {
+      path.setAttribute("style", `fill: ${color}; fill-opacity: 0.45;`);
+    } else {
+      path.removeAttribute("style"); // back to the default .suburb/.suburb.remainder fill
+    }
+  }
+}
+
+/**
+ * Populates #map-units with one icon per occupant (ANU-020), via the
+ * already-tested unitVisual(). Full redraw on every `occupancy` broadcast —
+ * same replaceChildren-then-rebuild precedent as renderSpawns.
+ * @param {OccupantUnit[]} units
+ * @param {PlayerPresence[]} members
+ */
+export function renderUnits(units, members) {
+  unitsLayer.replaceChildren();
+  const colorByPlayerId = new Map(members.map((m) => [m.playerId, m.color]));
+  for (const unit of units) {
+    const geo = sal_codeToGeo.get(unit.sal_code);
+    if (!geo) continue;
+    const unitType = unitTypesByKey.get(unit.unitTypeKey);
+    const visual = unitVisual(unit, unitType?.health ?? unit.health);
+    const [x, y] = geo.label_point;
+    const marker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    marker.setAttribute("cx", String(x));
+    marker.setAttribute("cy", String(y));
+    marker.setAttribute("r", "160");
+    marker.setAttribute(
+      "class",
+      `unit-marker unit-marker--${visual.icon} unit-marker--${visual.state}`,
+    );
+    marker.setAttribute("style", `fill: ${colorByPlayerId.get(unit.ownerPlayerId) ?? "#888"};`);
+    marker.dataset.unitId = unit.id;
+    marker.dataset.salCode = unit.sal_code;
+    unitsLayer.appendChild(marker);
+  }
+}
+
+/**
+ * Populates #map-factories with one icon per factory (ANU-020), via the
+ * already-tested factoryVisual(). Same full-redraw precedent as renderUnits.
+ * @param {FactoryState[]} factoryList
+ * @param {PlayerPresence[]} members
+ */
+export function renderFactories(factoryList, members) {
+  factoriesLayer.replaceChildren();
+  const colorByPlayerId = new Map(members.map((m) => [m.playerId, m.color]));
+  for (const factory of factoryList) {
+    const geo = sal_codeToGeo.get(factory.sal_code);
+    if (!geo) continue;
+    const visual = factoryVisual(factory, colorByPlayerId.get(factory.ownerPlayerId) ?? "#888");
+    const [x, y] = geo.label_point;
+    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    const size = 280;
+    rect.setAttribute("x", String(x - size / 2));
+    rect.setAttribute("y", String(y - size / 2));
+    rect.setAttribute("width", String(size));
+    rect.setAttribute("height", String(size));
+    rect.setAttribute("class", "factory-marker");
+    rect.setAttribute("style", `fill: ${visual.ownerColor};`);
+    rect.dataset.factoryId = factory.id;
+    rect.dataset.salCode = factory.sal_code;
+    factoriesLayer.appendChild(rect);
+  }
 }
 
 // --- pan/zoom (pointer events, so it works with mouse, touch and pen alike) --- //
@@ -403,11 +520,32 @@ function setupPanZoomAndTap(geometry) {
     // to the capturing element instead of whatever's visually under the
     // pointer. Hit-test by coordinate instead.
     const hit = /** @type {SVGElement | null} */ (document.elementFromPoint(event.clientX, event.clientY));
-    const sal_code = hit?.dataset?.salCode;
     if (selected) selected.classList.remove("selected");
+
+    // Units/factories are drawn on top of the suburb layer and checked
+    // first (ANU-020) — elementFromPoint already resolves to whichever
+    // element is topmost in paint order, so this is just reading which
+    // dataset field it carries, not a separate z-order computation.
+    const unitId = hit?.dataset?.unitId;
+    const factoryId = hit?.dataset?.factoryId;
+    const sal_code = hit?.dataset?.salCode;
+
+    if (unitId) {
+      selected = null;
+      tooltip.hidden = true;
+      onSelect({ type: "unit", unitId });
+      return;
+    }
+    if (factoryId) {
+      selected = null;
+      tooltip.hidden = true;
+      onSelect({ type: "factory", factoryId });
+      return;
+    }
     if (!sal_code) {
       tooltip.hidden = true;
       selected = null;
+      onSelect(null);
       return;
     }
     const path = suburbsLayer.querySelector(`[data-sal-code="${CSS.escape(sal_code)}"]`);
@@ -416,5 +554,6 @@ function setupPanZoomAndTap(geometry) {
       selected = /** @type {SVGElement} */ (path);
     }
     showTooltip(sal_code, event.clientX, event.clientY);
+    onSelect({ type: "suburb", sal_code });
   });
 }

@@ -203,6 +203,39 @@ export interface ServerFactories {
   factories: FactoryState[];
 }
 
+export interface UnitTypeCatalogEntry {
+  key: string;
+  health: number;
+  damage: number;
+  buildCostScrap: number;
+  buildTimeMs: number;
+  movementMode: "fly" | "ground";
+  /** Non-null for an ANU-016 skill-tree-gated variant — the GUI doesn't offer it until that node is unlocked. */
+  requiresSkillNode: string | null;
+}
+
+/**
+ * Global reference data (ANU-020) — every `unit_types` row, so the GUI's
+ * build buttons show real costs/stats instead of hardcoding values that
+ * could drift from server/units.ts's seedBaseUnitTypes. Not lobby-scoped;
+ * sent once per connection right after `welcome`.
+ */
+export interface ServerUnitCatalog {
+  type: "unitCatalog";
+  unitTypes: UnitTypeCatalogEntry[];
+}
+
+/**
+ * A player's own scrap/TFLOPS balance (ANU-020) — sent only to the owning
+ * player's socket(s), never broadcast to the lobby like LobbyState is,
+ * since a balance is private to that player.
+ */
+export interface ServerEconomy {
+  type: "economy";
+  scrap: number;
+  tflops: number;
+}
+
 export interface LobbySummary {
   lobbyId: string;
   name: string;
@@ -258,7 +291,9 @@ export type ServerMessage =
   | ServerNameRequired
   | ServerError
   | ServerOccupancy
-  | ServerFactories;
+  | ServerFactories
+  | ServerUnitCatalog
+  | ServerEconomy;
 
 const MAX_NAME_LENGTH = 40;
 const MAX_TOKEN_LENGTH = 100;

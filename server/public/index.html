@@ -96,11 +96,15 @@
             aria-label="Canberra suburb map"
           >
             <g id="map-suburbs"></g>
-            <!-- ANU-017's renderOwnership/renderCapture layer (fill, diagonal-stripe contest visuals) -->
+            <!-- ANU-017's renderOwnership/renderCapture layer (fill, diagonal-stripe contest visuals) —
+                 ANU-020's plain ownership fill colors the .suburb paths directly instead, leaving this
+                 layer untouched and still empty for ANU-017. -->
             <g id="map-ownership"></g>
             <g id="map-data-centers"></g>
             <g id="map-spawns"></g>
-            <!-- ANU-014's unit icon layer (drones/robots, in-transit state) -->
+            <!-- ANU-015's factory icon layer (ANU-020 renders into it via renderFactories) -->
+            <g id="map-factories"></g>
+            <!-- ANU-014's unit icon layer (drones/robots, in-transit state; ANU-020 renders into it via renderUnits) -->
             <g id="map-units"></g>
           </svg>
           <div id="map-tooltip" class="map-tooltip" hidden></div>
@@ -114,10 +118,34 @@
         <p id="map-attribution" class="map-attribution"></p>
       </section>
 
-      <section class="panel">
-        <h2>Players</h2>
-        <ul id="player-list" class="player-list"></ul>
-      </section>
+      <aside id="sidebar" class="sidebar">
+        <button id="sidebar-handle" type="button" class="sidebar-handle" hidden>▲ Sidebar</button>
+        <nav id="sidebar-tabs" class="sidebar-tabs" hidden>
+          <button type="button" class="sidebar-tab" data-panel="territory" aria-current="true">Territory</button>
+          <button type="button" class="sidebar-tab" data-panel="units">Units</button>
+          <button type="button" class="sidebar-tab" data-panel="factories">Factories</button>
+        </nav>
+        <p id="sidebar-economy" class="sidebar-economy" hidden>
+          <span class="sidebar-economy__item"><span id="sidebar-scrap">0</span> scrap</span>
+          <span class="sidebar-economy__item"><span id="sidebar-tflops">0</span> TFLOPS</span>
+        </p>
+
+        <section id="panel-territory" class="sidebar-panel">
+          <div id="suburb-detail" class="suburb-detail"></div>
+          <h2>Players</h2>
+          <ul id="player-list" class="player-list"></ul>
+        </section>
+
+        <section id="panel-units" class="sidebar-panel" hidden>
+          <h2>Your units</h2>
+          <ul id="unit-list" class="roster-list"></ul>
+        </section>
+
+        <section id="panel-factories" class="sidebar-panel" hidden>
+          <h2>Your factories</h2>
+          <ul id="factory-list" class="roster-list"></ul>
+        </section>
+      </aside>
     </main>
 
     <main id="options-screen" class="screen" hidden>

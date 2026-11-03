@@ -17,6 +17,83 @@
   display: none;
 }
 
+/* ANU-020: once .lobby-screen--fullscreen applies (style.css), the map
+   panel fills its fixed-position parent entirely instead of the bounded
+   70vh/640px box above, and the sidebar becomes a fixed overlay on top of
+   it rather than a block below it. */
+.lobby-screen--fullscreen .map-panel {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  border-radius: 0;
+  border: none;
+}
+
+.lobby-screen--fullscreen .sidebar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 320px;
+  overflow-y: auto;
+  border-radius: 0;
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+  z-index: 1;
+}
+
+/* Same cascade-specificity trap as .screen[hidden]/.map-panel[hidden] — a
+   .sidebar-panel also gets its own `display` below, so [hidden] needs
+   restating or a "hidden" panel still renders. */
+.sidebar-panel[hidden] {
+  display: none;
+}
+
+.sidebar-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.sidebar-handle {
+  display: none; /* only meaningful as the collapsed-drawer handle below */
+}
+
+@media (max-width: 640px) {
+  /* A collapsible bottom drawer, not a permanent screen-space tax on a
+     phone — doesn't resolve PLAN.md's still-open "list/HUD view vs. full
+     pan-zoom map" question, just keeps the existing pan-zoom map usable by
+     default instead of a fixed 320px-wide sidebar eating most of the
+     viewport width. */
+  .lobby-screen--fullscreen .sidebar {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    height: 50vh;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    transform: translateY(calc(100% - 2.75rem));
+    transition: transform 0.2s ease;
+  }
+
+  .lobby-screen--fullscreen .sidebar.sidebar--expanded {
+    transform: translateY(0);
+  }
+
+  .lobby-screen--fullscreen .sidebar-handle {
+    display: block;
+    width: 100%;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    padding: 0.6rem 0;
+    font-size: 0.85rem;
+  }
+}
+
 .map-panel .hud-bar {
   flex-wrap: wrap;
   gap: 0.5rem;
@@ -190,6 +267,38 @@
   margin: 0;
   font-size: 0.7rem;
   color: var(--text-dim);
+}
+
+/* ANU-020: unit/factory icons, rendered on top of the suburb/data-center/
+   spawn layers so a tap always resolves to the unit/factory above whatever
+   suburb it's standing in (map.js's click handler checks these datasets
+   first). Unlike .dc-marker/.spawn-marker, these take pointer events —
+   they're selectable, not purely decorative. */
+.unit-marker {
+  stroke: #05201c;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  cursor: pointer;
+}
+
+.unit-marker--robot {
+  /* Robots render as a diamond via a CSS transform on an otherwise-circular
+     marker — distinct silhouette from drones at a glance, not just color
+     (unitVisual's own "distinguish by icon, not just color" contract). */
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: rotate(45deg) scale(0.8);
+}
+
+.unit-marker--in-transit {
+  opacity: 0.6;
+}
+
+.factory-marker {
+  stroke: #05201c;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  cursor: pointer;
 }
 
 @media (max-width: 480px) {
