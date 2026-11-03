@@ -8,7 +8,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { getMapData, validSalCodes } from "./map-data.ts";
 import { createPerkHook } from "./perks.ts";
-import type { OccupantUnit } from "./protocol.ts";
+import type { OccupantUnit, UnitTypeCatalogEntry } from "./protocol.ts";
 
 export type PlaceUnitResult =
   | { ok: true; unit: OccupantUnit }
@@ -64,6 +64,23 @@ export function seedBaseUnitTypes(db: DatabaseSync): void {
   `);
   upsert.run("drone", 3, 2, 2, 1500, "fly");
   upsert.run("robot", 6, 4, 4, 3000, "ground");
+}
+
+/**
+ * Every unit_types row, for the client's build-cost catalog (ANU-020) — a
+ * plain export rather than a method on `Units`, same convention as
+ * seedBaseUnitTypes above, since it's reference data with no per-lobby
+ * state to close over.
+ */
+export function listUnitTypes(db: DatabaseSync): UnitTypeCatalogEntry[] {
+  const rows = db
+    .prepare(
+      `SELECT key, health, damage, build_cost_scrap AS buildCostScrap, build_time_ms AS buildTimeMs,
+              movement_mode AS movementMode, requires_skill_node AS requiresSkillNode
+       FROM unit_types`,
+    )
+    .all();
+  return rows as unknown as UnitTypeCatalogEntry[];
 }
 
 interface UnitTypeRow {

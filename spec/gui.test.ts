@@ -68,6 +68,54 @@ it("serves the Lobby screen's status/start/HUD controls", async () => {
   expect(document.querySelector("#status")).not.toBeNull();
 });
 
+// ANU-020: the sidebar overlay replacing the old standalone "Players"
+// section — always in the DOM (unlike #map-panel, never [hidden] itself),
+// with only its tabs/economy readout hidden pre-start, and #player-list now
+// living inside the Territory panel rather than as its own top-level section.
+it("serves the sidebar, always unhidden, with tabs/economy hidden by default", async () => {
+  const res = await fetch(new URL("/", baseUrl));
+  const dom = new JSDOM(await res.text());
+  const { document } = dom.window;
+
+  const sidebar = document.querySelector("#sidebar");
+  expect(sidebar).not.toBeNull();
+  expect(sidebar?.hasAttribute("hidden")).toBe(false);
+
+  const tabs = document.querySelector("#sidebar-tabs");
+  expect(tabs).not.toBeNull();
+  expect(tabs?.hasAttribute("hidden")).toBe(true);
+
+  const economy = document.querySelector("#sidebar-economy");
+  expect(economy).not.toBeNull();
+  expect(economy?.hasAttribute("hidden")).toBe(true);
+});
+
+it("serves the Territory/Units/Factories sidebar panels, Territory visible by default", async () => {
+  const res = await fetch(new URL("/", baseUrl));
+  const dom = new JSDOM(await res.text());
+  const { document } = dom.window;
+
+  const territory = document.querySelector("#panel-territory");
+  expect(territory).not.toBeNull();
+  expect(territory?.hasAttribute("hidden")).toBe(false);
+
+  const units = document.querySelector("#panel-units");
+  expect(units).not.toBeNull();
+  expect(units?.hasAttribute("hidden")).toBe(true);
+
+  const factories = document.querySelector("#panel-factories");
+  expect(factories).not.toBeNull();
+  expect(factories?.hasAttribute("hidden")).toBe(true);
+
+  // #player-list moved inside the Territory panel (ANU-020), not a
+  // standalone top-level section below the map any more.
+  expect(document.querySelector("#panel-territory #player-list")).not.toBeNull();
+
+  expect(document.querySelector("#suburb-detail")).not.toBeNull();
+  expect(document.querySelector("#unit-list")).not.toBeNull();
+  expect(document.querySelector("#factory-list")).not.toBeNull();
+});
+
 // ANU-011: a started lobby shows the real map (ANU-010) instead of ANU-005's
 // placeholder counter/bump panel; a waiting lobby shows neither yet. The
 // map panel's markup is always present in the static page (so app.js has
@@ -84,6 +132,16 @@ it("serves the Lobby screen's map panel hidden by default, and no counter/bump c
   expect(document.querySelector("#bump-button")).toBeNull();
   expect(document.querySelector("#count")).toBeNull();
   expect(document.querySelector("#last-bumped-by")).toBeNull();
+});
+
+it("serves the map's unit/factory/ownership SVG layers for ANU-020's renderUnits/renderFactories/renderOwnership to mount into", async () => {
+  const res = await fetch(new URL("/", baseUrl));
+  const dom = new JSDOM(await res.text());
+  const { document } = dom.window;
+
+  expect(document.querySelector("#map-ownership")).not.toBeNull();
+  expect(document.querySelector("#map-factories")).not.toBeNull();
+  expect(document.querySelector("#map-units")).not.toBeNull();
 });
 
 it("serves a reachable Options placeholder screen", async () => {

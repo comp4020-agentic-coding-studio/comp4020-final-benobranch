@@ -14,7 +14,11 @@
 /** @typedef {import("../protocol.ts").PlayerPresence} PlayerPresence */
 /** @typedef {import("../protocol.ts").LobbyState} LobbyState */
 /** @typedef {import("../protocol.ts").LobbySummary} LobbySummary */
-import { mountMap, unmountMap } from "./map.js";
+/** @typedef {import("../protocol.ts").OccupantUnit} OccupantUnit */
+/** @typedef {import("../protocol.ts").FactoryState} FactoryState */
+/** @typedef {import("../protocol.ts").UnitTypeCatalogEntry} UnitTypeCatalogEntry */
+import { mountMap, unmountMap, renderOwnership, renderUnits, renderFactories, setUnitCatalog } from "./map.js";
+import { mountSidebar, unmountSidebar, updateSidebarState, selectFromMap } from "./sidebar.js";
 
 const TOKEN_KEY = "infrastructure-siege:token";
 const LAST_CALLSIGN_KEY = "infrastructure-siege:last-callsign";
@@ -111,6 +115,18 @@ let awaitingCallsignForLobbyId = null;
 /** @type {"home" | "browse" | "lobby" | "options" | null} */
 let currentScreenName = null;
 
+// ANU-020: occupancy/factories/unitCatalog/economy — the three new broadcast
+// types app.js previously ignored entirely, plus the global unit-type
+// catalog, feeding both map.js's new render layers and the sidebar.
+/** @type {OccupantUnit[]} */
+let occupancy = [];
+/** @type {FactoryState[]} */
+let factories = [];
+/** @type {UnitTypeCatalogEntry[]} */
+let unitCatalog = [];
+let economy = { scrap: 0, tflops: 0 };
+let sidebarMounted = false;
+
 function setStatus(/** @type {"connecting" | "connected" | "disconnected"} */ state) {
   statusEl.dataset.state = state;
   statusEl.textContent =
@@ -127,6 +143,14 @@ function clearError(/** @type {HTMLElement} */ el) {
 
 function send(/** @type {Record<string, unknown>} */ message) {
   if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+}
+
+// ANU-020: gathers current state into sidebar.js's updateSidebarState —
+// called whenever any of occupancy/factories/unitCatalog/economy/lobby
+// changes, but only once the sidebar is actually mounted (a started lobby).
+function updateSidebar() {
+  if (!sidebarMounted || !currentLobby || !myPlayerId) return;
+  updateSidebarState({ lobby: currentLobby, myPlayerId, occupancy, factories, unitCatalog, economy });
 }
 
 /** @returns {{ screen: "home" | "browse" | "lobby" | "options", lobbyId?: string }} */
@@ -196,7 +220,11 @@ function renderLobbyScreen(/** @type {LobbyState} */ lobby) {
   // A waiting lobby has nothing to show on the map yet (issues/ANU-011.md) —
   // keep the roster+Start panel only. The screen is widened for a started
   // lobby's map, which isn't usable at Home/Browse's 480px cap.
+  // ANU-020: once started, the map goes full-screen with the sidebar as an
+  // overlay — .screen--wide stays toggled too (moot once fixed positioning
+  // applies, but costs nothing to leave on).
   screens.lobby.classList.toggle("screen--wide", lobby.started);
+  screens.lobby.classList.toggle("lobby-screen--fullscreen", lobby.started);
   mapPanelEl.hidden = !lobby.started;
   if (lobby.started) {
     // The spawn ring preview must match the spawn table the SERVER actually
@@ -211,9 +239,21 @@ function renderLobbyScreen(/** @type {LobbyState} */ lobby) {
     // if someone leaves this lobby for another (server/store.ts's
     // lobby-switch path doesn't block that). Either way members.length
     // isn't guaranteed to be a valid spawn-table key on its own.
-    mountMap(lobby.lobbyId, Math.max(4, Math.min(12, lobby.members.length)));
+    mountMap(lobby.lobbyId, Math.max(4, Math.min(12, lobby.members.length)), (selection) => selectFromMap(selection));
+    renderOwnership(lobby.ownership, lobby.members);
+    renderUnits(occupancy, lobby.members);
+    renderFactories(factories, lobby.members);
+    if (!sidebarMounted) {
+      mountSidebar({ send });
+      sidebarMounted = true;
+    }
+    updateSidebar();
   } else {
     unmountMap();
+    if (sidebarMounted) {
+      unmountSidebar();
+      sidebarMounted = false;
+    }
   }
 
   const onlineCount = lobby.members.filter((m) => m.online).length;
@@ -313,6 +353,21 @@ function handleMessage(/** @type {ServerMessage} */ msg) {
   } else if (msg.type === "lobbyList") {
     lobbies = msg.lobbies;
     if (parseHash().screen === "browse") renderLobbyList();
+  } else if (msg.type === "occupancy") {
+    occupancy = msg.units;
+    if (currentLobby?.started) renderUnits(occupancy, currentLobby.members);
+    updateSidebar();
+  } else if (msg.type === "factories") {
+    factories = msg.factories;
+    if (currentLobby?.started) renderFactories(factories, currentLobby.members);
+    updateSidebar();
+  } else if (msg.type === "unitCatalog") {
+    unitCatalog = msg.unitTypes;
+    setUnitCatalog(unitCatalog);
+    updateSidebar();
+  } else if (msg.type === "economy") {
+    economy = { scrap: msg.scrap, tflops: msg.tflops };
+    updateSidebar();
   } else if (msg.type === "nameRequired") {
     navigateOnNextLobbyState = false;
     showNamePrompt(msg.lobbyId);

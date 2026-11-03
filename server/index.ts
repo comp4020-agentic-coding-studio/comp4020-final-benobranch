@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { WebSocketServer, type WebSocket } from "ws";
 import { openStore, type StoredLobby } from "./store.ts";
 import { createTerritory } from "./territory.ts";
-import { createUnits } from "./units.ts";
+import { createUnits, listUnitTypes } from "./units.ts";
 import { createFactories } from "./factories.ts";
 import { elapsedMs } from "./time.ts";
 import { renderReadmePage } from "./readme-page.ts";
@@ -130,6 +130,18 @@ function broadcastFactories(lobbyId: string): void {
   broadcastOccupancy(lobbyId);
 }
 
+// A scrap/TFLOPS balance is private to the player it belongs to — unlike
+// LobbyState (identical for every socket in a lobby), this is never
+// broadcast, only sent to the owning player's own socket(s) (ANU-020).
+function sendEconomyToPlayer(lobbyId: string, playerId: string): void {
+  const economy = store.getMemberEconomy(lobbyId, playerId);
+  if (!economy) return;
+  const message: ServerMessage = { type: "economy", scrap: economy.scrap, tflops: economy.tflops };
+  for (const [socket, meta] of sockets) {
+    if (meta.lobbyId === lobbyId && meta.playerId === playerId) send(socket, message);
+  }
+}
+
 // Moves every live socket belonging to `playerId` from `fromLobbyId` to
 // `toLobbyId` (a player has exactly one lobby membership at a time — see
 // store.ts's joinLobby — so every one of their tabs follows the move) and
@@ -235,6 +247,9 @@ wss.on("connection", (socket) => {
       sockets.set(socket, { playerId, lobbyId, registered: true, watchingLobbies: false });
 
       send(socket, { type: "welcome", playerId, token, lobby: lobby ? buildLobbyState(lobby) : null });
+      // Global reference data (ANU-020) — not lobby-scoped, so this is sent
+      // unconditionally rather than gated on lobbyId like the three below.
+      send(socket, { type: "unitCatalog", unitTypes: listUnitTypes(store.db) });
       // A reconnecting client needs current occupancy and factory state too,
       // not just lobby state — both otherwise only arrive on the next
       // change broadcast, which a client that was offline when it happened
@@ -242,6 +257,7 @@ wss.on("connection", (socket) => {
       // was connected (the stored-timestamp rule means that's fine).
       if (lobbyId) send(socket, { type: "occupancy", lobbyId, units: units.getOccupancy(lobbyId) });
       if (lobbyId) send(socket, { type: "factories", lobbyId, factories: factories.getFactories(lobbyId) });
+      if (lobbyId) sendEconomyToPlayer(lobbyId, playerId);
       if (lobbyId) broadcastLobbyState(lobbyId); // this player's online status just changed
       return;
     }
@@ -288,6 +304,9 @@ wss.on("connection", (socket) => {
         broadcastLobbyState(meta.lobbyId);
         broadcastLobbyList(); // the browse list also shows started/not-started
         broadcastFactories(meta.lobbyId);
+        // Primes every member's sidebar economy readout before any
+        // build/attack action would otherwise change it (ANU-020).
+        for (const playerId of memberPlayerIds) sendEconomyToPlayer(lobby.lobbyId, playerId);
       }
       return;
     }
@@ -322,6 +341,9 @@ wss.on("connection", (socket) => {
         return;
       }
       broadcastOccupancy(meta.lobbyId);
+      // A kill credits scrap (server/units.ts) — update the attacker's own
+      // sidebar economy readout (ANU-020); move/hit outcomes don't change it.
+      if (result.outcome === "kill") sendEconomyToPlayer(meta.lobbyId, meta.playerId);
       return;
     }
 
@@ -333,6 +355,7 @@ wss.on("connection", (socket) => {
         return;
       }
       broadcastFactories(meta.lobbyId);
+      sendEconomyToPlayer(meta.lobbyId, meta.playerId); // deducted FACTORY_BUILD_COST_SCRAP
       return;
     }
 
@@ -344,6 +367,7 @@ wss.on("connection", (socket) => {
         return;
       }
       broadcastFactories(meta.lobbyId);
+      sendEconomyToPlayer(meta.lobbyId, meta.playerId); // deducted the unit's build cost
       return;
     }
 

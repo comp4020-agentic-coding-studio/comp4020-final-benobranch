@@ -105,6 +105,34 @@ h2 {
   max-width: 960px;
 }
 
+/* ANU-020: once a lobby is started, the map fills the viewport and the
+   sidebar overlays it, rather than the map being one more boxed panel in a
+   vertically-stacked, width-capped screen. Toggled alongside .screen--wide
+   (which still applies but is moot once position:fixed takes over) exactly
+   when lobby.started — every other screen, and the non-started lobby
+   screen, are untouched by this class. Positioned below the fixed .status
+   bar's 2.5rem reserved offset (see body's padding-top above). */
+.lobby-screen--fullscreen {
+  position: fixed;
+  top: 2.5rem;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+}
+
+/* The pre-start status/start-button block has nothing to show once the map
+   is full-screen (ANU-020) — hidden rather than removed, since app.js keeps
+   writing to #lobby-status/#start-button for the brief moment before a
+   lobby's `started` flip re-renders this screen. */
+.lobby-screen--fullscreen > .hud-bar,
+.lobby-screen--fullscreen > .panel:not(.map-panel) {
+  display: none;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -316,4 +344,157 @@ button:not(:disabled):hover {
   font-size: 0.85rem;
   text-align: center;
   padding: 1rem 0;
+}
+
+/* ANU-020: the sidebar panel (Territory/Units/Factories) that replaces the
+   old standalone "Players" section. Pre-start (not yet .lobby-screen--
+   fullscreen) it renders as a normal in-flow panel holding just the player
+   list — map.css's fullscreen override turns it into an overlay. Always
+   present in the DOM, never [hidden] (unlike .map-panel) — only its tabs/
+   economy readout are hidden pre-start. */
+.sidebar {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.sidebar-tabs {
+  display: flex;
+  gap: 0.4rem;
+}
+
+/* Same cascade-specificity trap style.css/map.css already document for
+   .screen[hidden]/.map-panel[hidden]/.sidebar-panel[hidden]: this rule's
+   specificity ties with .sidebar-tabs above and loses on source order
+   unless restated. */
+.sidebar-tabs[hidden] {
+  display: none;
+}
+
+.sidebar-tab {
+  flex: 1;
+  padding: 0.5rem 0.4rem;
+  font-size: 0.8rem;
+  background: var(--bg);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+
+.sidebar-tab[aria-current="true"] {
+  background: var(--accent-dim);
+  color: #d9fff7;
+  border-color: var(--accent-dim);
+}
+
+.sidebar-economy {
+  display: flex;
+  gap: 1rem;
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+/* Same cascade trap as .sidebar-tabs[hidden] above. */
+.sidebar-economy[hidden] {
+  display: none;
+}
+
+.sidebar-economy__item {
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebar-economy__item span {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.suburb-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.suburb-detail:empty::before {
+  content: "Tap a suburb on the map to inspect it.";
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.suburb-detail__name {
+  font-weight: 600;
+}
+
+.suburb-detail__owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.suburb-detail__owner-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  display: inline-block;
+  background: var(--border);
+}
+
+.suburb-detail__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.suburb-detail__actions button,
+.suburb-detail__actions select {
+  font-size: 0.85rem;
+  padding: 0.5rem 0.6rem;
+}
+
+.roster-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.roster-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--bg);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+.roster-list li.highlighted {
+  border-color: var(--accent);
+}
+
+.roster-list .empty {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 1rem 0;
+}
+
+.roster-list__progress {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.roster-list__progress-fill {
+  height: 100%;
+  background: var(--accent);
 }
