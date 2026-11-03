@@ -16,6 +16,7 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { PLAYER_COLORS } from "./protocol.ts";
 import { createPerkHook } from "./perks.ts";
+import { seedBaseUnitTypes } from "./units.ts";
 
 export const DEFAULT_LOBBY_ID = "default";
 
@@ -95,6 +96,7 @@ export function openStore(dbPath: string): Store {
   db.exec("PRAGMA foreign_keys = ON");
 
   migrate(db);
+  seedBaseUnitTypes(db);
 
   const insertPlayer = db.prepare(
     "INSERT INTO players (token, player_id, created_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
@@ -141,11 +143,31 @@ export function openStore(dbPath: string): Store {
     INSERT INTO lobbies (id, name, capacity, started, started_at, updated_at)
     VALUES (?, ?, ?, 0, NULL, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `);
-  // First join to a lobby: a fresh row, economy columns at their defaults
-  // (the column DEFAULTs below), joined_at stamped now for stable ordering.
+  // First join to a lobby, OR a player who already belongs to a different
+  // lobby creating/joining this one (player_id is lobby_members' primary
+  // key — a player has exactly one membership at a time, so this IS the
+  // "switch lobby" operation). ON CONFLICT(player_id), not a plain INSERT:
+  // a plain INSERT throws UNIQUE constraint failed the moment an existing
+  // member of lobby A creates/joins lobby B (the ordinary Server Browse
+  // flow) — uncaught, that crashes the ws message handler. The conflict
+  // branch explicitly resets economy/perk columns to their defaults, since
+  // a new lobby is a fresh game, not a continuation of the old one's.
   const insertMembership = db.prepare(`
     INSERT INTO lobby_members (lobby_id, player_id, name, color, joined_at)
     VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%f', 'now'))
+    ON CONFLICT(player_id) DO UPDATE SET
+      lobby_id = excluded.lobby_id,
+      name = excluded.name,
+      color = excluded.color,
+      joined_at = excluded.joined_at,
+      scrap = 0,
+      tflops = 0,
+      tflops_last_accrued_at = NULL,
+      perk_factory_build_speed_multiplier = 1,
+      perk_factory_build_cost_multiplier = 1,
+      perk_scrap_per_kill_multiplier = 1,
+      perk_capture_speed_multiplier = 1,
+      perk_data_transfer_speed_multiplier = 1
   `);
   // Reconnect / re-send of createLobby|joinLobby for a lobby already joined:
   // touches only name/color (both already locked and unchanged in practice —
@@ -472,12 +494,12 @@ function migrate(db: DatabaseSync): void {
           requires_skill_node TEXT
         )
       `);
-      db.exec(`
-        INSERT INTO unit_types (key, health, damage, build_cost_scrap, build_time_ms, movement_mode, requires_skill_node)
-        VALUES
-          ('drone', 1, 1, 1, 1000, 'fly', NULL),
-          ('robot', 1, 1, 1, 1000, 'ground', NULL)
-      `);
+      // Seed rows are NOT inserted here — see seedBaseUnitTypes below. A
+      // migration runs once per schema version; both ANU-014 (real
+      // drone/robot stats) and ANU-016 (gated variant rows) need to add or
+      // change unit_types rows without each needing their own colliding
+      // user_version bump, which a migration-time INSERT would force them
+      // into. An idempotent boot-time upsert does that instead.
       db.exec(`
         CREATE TABLE units (
           id TEXT PRIMARY KEY,

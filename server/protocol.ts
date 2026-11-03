@@ -200,11 +200,12 @@ export const MAX_CAPACITY = 12;
 // locked for the lobby's lifetime — see ADR 0002's precedent for locking
 // callsign the same way. Chosen to stay visually distinct from map.js's
 // existing data-center tier marker colors (mega #ff4fd8, major #ffb23e,
-// standard #6fa8ff — all high-saturation, 36/216/313 degree hues): these 12
-// sit on hues at least 25 degrees from every tier color and at least 30
-// degrees apart from each other, so a player's territory color is never
-// mistaken for a data-center marker (verified in spec/territory.test.ts by
-// Euclidean RGB distance, not just inequality).
+// standard #6fa8ff): every color below is at least 60 (Euclidean RGB
+// distance, 0-441 scale) from all three tier markers, and all 12 are at
+// least 100 apart from each other — picked for separation in rendered RGB,
+// not evenly-spaced hue (some pairs' hues sit closer than you'd expect from
+// a pure hue wheel, but their lightness/saturation keep the rendered colors
+// apart). Both bounds are exactly what spec/territory.test.ts asserts.
 export const PLAYER_COLORS: readonly string[] = [
   "#ec7813",
   "#ece513",

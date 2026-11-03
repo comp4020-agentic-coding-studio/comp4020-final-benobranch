@@ -250,7 +250,7 @@ wss.on("connection", (socket) => {
         // Spawn suburbs auto-owned at kickoff (issues/ANU-013.md) — in join
         // order, against this lobby's own capacity's spawn table.
         const memberPlayerIds = store.getLobbyMembers(lobby.lobbyId).map((m) => m.playerId);
-        territory.assignSpawnOwnership(lobby.lobbyId, lobby.capacity, memberPlayerIds);
+        territory.assignSpawnOwnership(lobby.lobbyId, memberPlayerIds);
         broadcastLobbyState(meta.lobbyId);
         broadcastLobbyList(); // the browse list also shows started/not-started
       }

@@ -24,6 +24,29 @@ export interface Units {
   getOccupancy(lobbyId: string): OccupantUnit[];
 }
 
+/**
+ * Base unit-type rows (placeholders ANU-014 replaces with real stats),
+ * upserted idempotently at store boot rather than seeded in ANU-013's
+ * migration — a migration runs once per schema version, but both ANU-014
+ * (real stats) and ANU-016 (gated variant rows) need to add/change
+ * unit_types rows after this issue merges, without forcing either into its
+ * own colliding `PRAGMA user_version` bump just to re-seed a row.
+ */
+export function seedBaseUnitTypes(db: DatabaseSync): void {
+  const upsert = db.prepare(`
+    INSERT INTO unit_types (key, health, damage, build_cost_scrap, build_time_ms, movement_mode, requires_skill_node)
+    VALUES (?, ?, ?, ?, ?, ?, NULL)
+    ON CONFLICT(key) DO UPDATE SET
+      health = excluded.health,
+      damage = excluded.damage,
+      build_cost_scrap = excluded.build_cost_scrap,
+      build_time_ms = excluded.build_time_ms,
+      movement_mode = excluded.movement_mode
+  `);
+  upsert.run("drone", 1, 1, 1, 1000, "fly");
+  upsert.run("robot", 1, 1, 1, 1000, "ground");
+}
+
 export function createUnits(db: DatabaseSync): Units {
   const selectUnitType = db.prepare("SELECT health FROM unit_types WHERE key = ?");
   const insertUnit = db.prepare(`

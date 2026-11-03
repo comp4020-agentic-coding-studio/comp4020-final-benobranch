@@ -132,23 +132,46 @@ describe("player colors", () => {
     const playerColors = [...protocolTs.matchAll(/"(#[0-9a-fA-F]{6})"/g)].map((m) => m[1]);
     expect(playerColors.length).toBeGreaterThan(0);
 
-    const MIN_DISTANCE = 60; // Euclidean RGB distance — chosen well below the smallest margin verified when the palette was picked (~68)
+    const MIN_MARKER_DISTANCE = 60; // Euclidean RGB distance — below the smallest margin verified when the palette was picked (~68.4)
     for (const pc of playerColors) {
       for (const tc of tierColors) {
         expect(
           rgbDistance(pc, tc),
           `player color ${pc} is too close to data-center marker color ${tc}`,
-        ).toBeGreaterThanOrEqual(MIN_DISTANCE);
+        ).toBeGreaterThanOrEqual(MIN_MARKER_DISTANCE);
+      }
+    }
+
+    const MIN_PAIRWISE_DISTANCE = 100; // below the smallest pairwise margin verified when the palette was picked (~101.2)
+    for (let i = 0; i < playerColors.length; i++) {
+      for (let j = i + 1; j < playerColors.length; j++) {
+        expect(
+          rgbDistance(playerColors[i], playerColors[j]),
+          `player colors ${playerColors[i]} and ${playerColors[j]} are too close to each other`,
+        ).toBeGreaterThanOrEqual(MIN_PAIRWISE_DISTANCE);
       }
     }
   });
 });
 
 describe("spawn-ownership at kickoff", () => {
-  it("auto-owns each player's spawn suburb the moment the lobby starts", async () => {
+  it("auto-owns each player's spawn suburb the moment the lobby starts, using the player-COUNT spawn table, not the lobby's configured capacity", async () => {
+    // Capacity 12, but started with only the 4-player minimum: PLAN.md says
+    // "spawns are computed per lobby from its player count," so this must
+    // use the 4-player spawn ring, not the first 4 entries of the 12-player
+    // ring (which clusters wherever that larger ring happens to start).
+    const mapData = JSON.parse(readFileSync("scripts/map/data/map.json", "utf8")) as {
+      suburbs: { sal_code: string; name: string }[];
+      spawn_table_by_lobby_size: Record<string, { spawns: string[] }>;
+    };
+    const nameToSalCode = new Map(mapData.suburbs.map((s) => [s.name, s.sal_code]));
+    const expectedSalCodes = new Set(
+      mapData.spawn_table_by_lobby_size["4"].spawns.map((name) => nameToSalCode.get(name)!),
+    );
+
     const lobbyName = `spawn-ownership-${Date.now()}`;
     const creator = await connect(baseUrl);
-    send(creator, { type: "createLobby", name: lobbyName, capacity: 4, callsign: "spawn-creator" });
+    send(creator, { type: "createLobby", name: lobbyName, capacity: 12, callsign: "spawn-creator" });
     const created = await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { name: string }).name === lobbyName);
     const lobbyId = (created.lobby as { lobbyId: string }).lobbyId;
 
@@ -178,6 +201,10 @@ describe("spawn-ownership at kickoff", () => {
     const lobby = afterStart.lobby as { ownership: Record<string, string>; members: { playerId: string }[] };
     const ownedSalCodes = Object.keys(lobby.ownership);
     expect(ownedSalCodes, "each of the 4 players should own exactly one spawn suburb").toHaveLength(4);
+    expect(
+      new Set(ownedSalCodes),
+      "the owned suburbs must be exactly the 4-player spawn table's suburbs, not the 12-player ring's first 4",
+    ).toEqual(expectedSalCodes);
 
     const ownerIds = new Set(Object.values(lobby.ownership));
     const memberIds = new Set(lobby.members.map((m) => m.playerId));
@@ -210,7 +237,9 @@ describe("stored-timestamp rule: game-elapsed time", () => {
     const lobbyId = (created.lobby as { lobbyId: string }).lobbyId;
 
     send(creator, { type: "startLobby" });
-    await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { lobbyId: string; started: boolean }).lobbyId === lobbyId && (m.lobby as { started: boolean }).started);
+    const started = await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { lobbyId: string; started: boolean }).lobbyId === lobbyId && (m.lobby as { started: boolean }).started);
+    const startedAt = (started.lobby as { startedAt: string }).startedAt;
+    expect(startedAt).not.toBeNull();
 
     await new Promise((r) => setTimeout(r, 500)); // ~0.5 real s = ~30 game-s at scale 60
 
@@ -223,14 +252,23 @@ describe("stored-timestamp rule: game-elapsed time", () => {
     // A fresh identity can't rejoin an already-started lobby (no late
     // join) — resume the creator's own identity via their token instead,
     // same pattern as spec/persistence.test.ts's token-resume test.
+    const reconnectedAt = Date.now();
     const reader = await connect(second.baseUrl, creatorToken);
     const welcome = reader.messages.find((m) => m.type === "welcome")!;
-    const elapsed = (welcome.lobby as { gameElapsedMs: number }).gameElapsedMs;
+    const resumedLobby = welcome.lobby as { startedAt: string; gameElapsedMs: number };
 
-    // At scale 60, even the restart's own overhead (spawnServer polls up to
-    // 10s) means elapsed should be comfortably large, and must never be ~0
-    // (which would mean startedAt was lost/reset across the restart).
-    expect(elapsed, "game-elapsed time must reflect real elapsed time since startedAt, scaled, surviving the restart").toBeGreaterThan(10_000);
+    expect(resumedLobby.startedAt, "startedAt must be the exact same stored timestamp across the restart, not reset").toBe(startedAt);
+
+    // gameElapsedMs is computed from real wall-clock time since startedAt
+    // (not a counter that kept running), scaled by GAME_TIME_SCALE=60 — so
+    // it should equal (now - startedAt) * 60, within a tolerance that
+    // covers this test's own real elapsed time plus the restart's overhead
+    // (spawnServer polls up to 10s), not just "greater than some floor."
+    const expectedElapsedMs = (reconnectedAt - Date.parse(startedAt)) * 60;
+    expect(
+      Math.abs(resumedLobby.gameElapsedMs - expectedElapsedMs),
+      `gameElapsedMs (${resumedLobby.gameElapsedMs}) should track (now - startedAt) * 60 (${expectedElapsedMs}) within the restart's own overhead`,
+    ).toBeLessThan(15_000 * 60); // 15 real seconds' worth of scaled slack, generous for CI/restart variance
 
     await closeAndWait(reader);
   });

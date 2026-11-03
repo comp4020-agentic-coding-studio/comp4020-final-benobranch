@@ -12,10 +12,14 @@ export interface Territory {
    * capture all start from a non-empty ownership state instead of an
    * all-neutral map. Members are assigned spawns in join order (the same
    * stable order server/store.ts's getLobbyMembers now guarantees via
-   * joined_at) against the spawn table's own order, for a lobby of this
-   * exact capacity.
+   * joined_at) against the spawn table entry for the ACTUAL player count —
+   * not the lobby's configured capacity. PLAN.md: "spawns are computed per
+   * lobby from its player count" — a 12-capacity lobby started with only
+   * the 4-player minimum must use the 4-player spawn ring (a tight, roughly
+   * balanced set for 4), not the first 4 entries of the 12-player ring
+   * (which clusters however that ring happens to start).
    */
-  assignSpawnOwnership(lobbyId: string, capacity: number, memberPlayerIds: string[]): void;
+  assignSpawnOwnership(lobbyId: string, memberPlayerIds: string[]): void;
   getOwnership(lobbyId: string): Record<string, string>;
 }
 
@@ -30,15 +34,14 @@ export function createTerritory(db: DatabaseSync): Territory {
   );
 
   return {
-    assignSpawnOwnership(lobbyId, capacity, memberPlayerIds) {
-      const spawnSalCodes = spawnSalCodesForCapacity(capacity);
-      if (!spawnSalCodes) return; // no spawn table entry for this capacity — nothing to assign
-      // Capacity can exceed the recorded member count in edge cases (e.g. a
-      // lobby started below its own capacity isn't possible per PLAN.md's
-      // minimum-4 rule, but a mismatched spawn-table length is still
-      // handled defensively via Math.min rather than throwing).
-      const n = Math.min(spawnSalCodes.length, memberPlayerIds.length);
-      for (let i = 0; i < n; i++) {
+    assignSpawnOwnership(lobbyId, memberPlayerIds) {
+      // MIN_CAPACITY/MAX_CAPACITY (4-12) bound the spawn table's keys —
+      // clamp defensively rather than trust the caller's count is in range.
+      const n = Math.max(4, Math.min(12, memberPlayerIds.length));
+      const spawnSalCodes = spawnSalCodesForCapacity(n);
+      if (!spawnSalCodes) return; // no spawn table entry for this player count — nothing to assign
+      const assignable = Math.min(spawnSalCodes.length, memberPlayerIds.length);
+      for (let i = 0; i < assignable; i++) {
         upsertOwner.run(lobbyId, spawnSalCodes[i], memberPlayerIds[i]);
       }
     },
