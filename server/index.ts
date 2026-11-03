@@ -64,8 +64,6 @@ function buildLobbyState(lobby: StoredLobby): LobbyState {
     name: lobby.name,
     capacity: lobby.capacity,
     started: lobby.started,
-    count: lobby.count,
-    lastBumpedBy: lobby.lastBumpedBy,
     members: members.map((m) => ({ playerId: m.playerId, name: m.name, online: isOnline(m.playerId) })),
   };
 }
@@ -204,16 +202,6 @@ wss.on("connection", (socket) => {
     const meta = sockets.get(socket);
     if (!meta?.registered) {
       socket.close(1008, "send 'hello' first");
-      return;
-    }
-
-    if (message.type === "bump") {
-      if (!meta.lobbyId) return; // not in a lobby — nothing to bump
-      // Synchronous store call: no await between the mutation and the
-      // broadcast, so this handler can't interleave with another one on the
-      // same event loop — see docs/adr/0001-persistence-and-realtime-stack.md.
-      const lobby = store.bump(meta.lobbyId, meta.playerId);
-      if (lobby) broadcastLobbyState(meta.lobbyId);
       return;
     }
 

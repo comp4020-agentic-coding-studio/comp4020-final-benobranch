@@ -99,7 +99,7 @@ it("broadcasts one connection's action to several others in the same lobby withi
 
   const before = clients.map((c) => lobbyStateMessages(c, lobbyId).length);
 
-  send(creator, { type: "bump" });
+  send(creator, { type: "startLobby" });
 
   await new Promise((r) => setTimeout(r, 1000));
 
@@ -108,8 +108,11 @@ it("broadcasts one connection's action to several others in the same lobby withi
     expect(after, `connection ${i} should have received a new lobbyState broadcast`).toBeGreaterThan(before[i]);
   }
 
-  const counts = new Set(clients.map((c) => (lobbyStateMessages(c, lobbyId).at(-1)!.lobby as { count: number }).count));
-  expect(counts.size, "every connection in the lobby should agree on the resulting count").toBe(1);
+  const startedStates = new Set(
+    clients.map((c) => (lobbyStateMessages(c, lobbyId).at(-1)!.lobby as { started: boolean }).started),
+  );
+  expect(startedStates.size, "every connection in the lobby should agree the lobby has started").toBe(1);
+  expect(startedStates.has(true)).toBe(true);
 
   for (const c of clients) c.socket.close();
 });
@@ -118,7 +121,7 @@ it("does not broadcast a lobby's state to a connection in a different lobby", as
   const { client: inLobbyA, lobbyId: lobbyAId } = await connectAndCreateLobby(`isolation-a-${Date.now()}`, "alice");
   const { client: inLobbyB } = await connectAndCreateLobby(`isolation-b-${Date.now()}`, "bob");
 
-  send(inLobbyA, { type: "bump" });
+  send(inLobbyA, { type: "startLobby" });
   await new Promise((r) => setTimeout(r, 500));
 
   const bSawLobbyA = lobbyStateMessages(inLobbyB, lobbyAId).length;

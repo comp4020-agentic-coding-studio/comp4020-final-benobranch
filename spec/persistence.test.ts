@@ -81,10 +81,14 @@ it("keeps a lobby's state across a real process restart", async () => {
   const created = await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { name: string }).name === lobbyName);
   const lobbyId = (created.lobby as { lobbyId: string }).lobbyId;
 
-  send(creator, { type: "bump" });
-  await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { lobbyId: string; count: number }).lobbyId === lobbyId && (m.lobby as { count: number }).count === 1);
-  send(creator, { type: "bump" });
-  await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { lobbyId: string; count: number }).lobbyId === lobbyId && (m.lobby as { count: number }).count === 2);
+  send(creator, { type: "startLobby" });
+  await waitFor(
+    creator,
+    (m) =>
+      m.type === "lobbyState" &&
+      (m.lobby as { lobbyId: string; started: boolean }).lobbyId === lobbyId &&
+      (m.lobby as { started: boolean }).started,
+  );
 
   await closeAndWait(creator);
   await first.stop();
@@ -92,22 +96,21 @@ it("keeps a lobby's state across a real process restart", async () => {
   const second = await spawnServer({ port, dataDir });
   servers.push(second);
 
-  // A brand-new identity (no token) joining this pre-existing lobby for the
-  // first time still needs a callsign — joining doesn't bypass the lock-in
-  // rule just because the lobby itself survived a restart.
+  // A brand-new identity attempting to join this now-started lobby for the
+  // first time is still refused under "no late join once a game begins" —
+  // this only holds if `started` itself survived the restart, not just the
+  // lobby's existence.
   const reader = await connect(second.baseUrl);
   const readerWelcome = reader.messages.find((m) => m.type === "welcome")!;
   expect(readerWelcome.lobby, "a fresh identity has no lobby to resume").toBeNull();
 
-  send(reader, { type: "joinLobby", lobbyId });
-  const prompt = await waitFor(reader, (m) => m.type === "nameRequired");
-  expect(prompt.lobbyId).toBe(lobbyId);
-
   send(reader, { type: "joinLobby", lobbyId, callsign: "post-restart-reader" });
-  const joined = await waitFor(reader, (m) => m.type === "lobbyState" && (m.lobby as { lobbyId: string }).lobbyId === lobbyId);
+  const error = await waitFor(reader, (m) => m.type === "error");
+  expect(
+    (error.message as string).toLowerCase(),
+    "the lobby's started state should have survived the restart",
+  ).toContain("started");
   await closeAndWait(reader);
-
-  expect((joined.lobby as { count: number }).count, "the lobby's counter should have survived the restart").toBe(2);
 });
 
 it("resumes the same playerId, lobby, and locked callsign via token across a restart", async () => {

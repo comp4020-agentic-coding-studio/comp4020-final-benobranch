@@ -14,6 +14,7 @@
 /** @typedef {import("../protocol.ts").PlayerPresence} PlayerPresence */
 /** @typedef {import("../protocol.ts").LobbyState} LobbyState */
 /** @typedef {import("../protocol.ts").LobbySummary} LobbySummary */
+import { mountMap, unmountMap } from "./map.js";
 
 const TOKEN_KEY = "infrastructure-siege:token";
 const LAST_CALLSIGN_KEY = "infrastructure-siege:last-callsign";
@@ -81,9 +82,7 @@ const lobbyNameDisplayEl = /** @type {HTMLElement} */ (document.getElementById("
 const playerCountEl = /** @type {HTMLElement} */ (document.getElementById("player-count"));
 const lobbyStatusEl = /** @type {HTMLElement} */ (document.getElementById("lobby-status"));
 const startButton = /** @type {HTMLButtonElement} */ (document.getElementById("start-button"));
-const countEl = /** @type {HTMLElement} */ (document.getElementById("count"));
-const lastBumpedByEl = /** @type {HTMLElement} */ (document.getElementById("last-bumped-by"));
-const bumpButton = /** @type {HTMLButtonElement} */ (document.getElementById("bump-button"));
+const mapPanelEl = /** @type {HTMLElement} */ (document.getElementById("map-panel"));
 const playerListEl = /** @type {HTMLElement} */ (document.getElementById("player-list"));
 
 /** @type {WebSocket | null} */
@@ -190,11 +189,20 @@ function renderLobbyList() {
 
 function renderLobbyScreen(/** @type {LobbyState} */ lobby) {
   lobbyNameDisplayEl.textContent = lobby.name;
-  countEl.textContent = String(lobby.count);
-  lastBumpedByEl.textContent = lobby.lastBumpedBy ?? "nobody yet";
   lobbyStatusEl.textContent = lobby.started ? "started" : "waiting";
   lobbyStatusEl.dataset.state = lobby.started ? "started" : "waiting";
   startButton.hidden = lobby.started;
+
+  // A waiting lobby has nothing to show on the map yet (issues/ANU-011.md) —
+  // keep the roster+Start panel only. The screen is widened for a started
+  // lobby's map, which isn't usable at Home/Browse's 480px cap.
+  screens.lobby.classList.toggle("screen--wide", lobby.started);
+  mapPanelEl.hidden = !lobby.started;
+  if (lobby.started) {
+    mountMap(lobby.lobbyId, lobby.capacity);
+  } else {
+    unmountMap();
+  }
 
   const onlineCount = lobby.members.filter((m) => m.online).length;
   playerCountEl.textContent = `${onlineCount} online`;
@@ -278,7 +286,6 @@ function handleMessage(/** @type {ServerMessage} */ msg) {
     myPlayerId = msg.playerId;
     saveToken(msg.token);
     currentLobby = msg.lobby;
-    bumpButton.disabled = false;
     // Re-evaluates the current route now that identity (and possibly a
     // resumed lobby) is known — on a reconnect this just refreshes
     // currentLobby-derived UI on whatever screen is already showing.
@@ -332,7 +339,6 @@ function connect() {
   });
 
   ws.addEventListener("close", () => {
-    bumpButton.disabled = true;
     setStatus("disconnected");
     const delay = Math.min(1000 * 2 ** reconnectAttempt, 10_000);
     reconnectAttempt += 1;
@@ -376,10 +382,6 @@ namePromptForm.addEventListener("submit", (event) => {
 
 startButton.addEventListener("click", () => {
   send({ type: "startLobby" });
-});
-
-bumpButton.addEventListener("click", () => {
-  send({ type: "bump" });
 });
 
 window.addEventListener("hashchange", render);

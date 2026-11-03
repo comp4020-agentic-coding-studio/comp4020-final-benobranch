@@ -1,8 +1,15 @@
 // @ts-check
-// Standalone map screen (ANU-010): render-and-inspect only — no ownership,
-// no attacks, no lobby wiring. Deliberately a separate file/page from
-// app.js/index.html (ANU-009 is concurrently rewriting those for the
-// Home/Browse/HUD screens) so the two don't collide across worktrees.
+// Map panel (ANU-010, mounted into the lobby screen by ANU-011):
+// render-and-inspect only — no ownership, no attacks. `app.js` imports this
+// module and calls `mountMap` once a lobby is `started` — see
+// issues/ANU-011.md. The markup (`#map-svg` etc.) lives statically in
+// index.html's lobby screen, just hidden until then, so this module's
+// `getElementById` calls at the top (run once, when app.js imports it) are
+// safe regardless of mount order.
+//
+// No top-level `await` here: that would block app.js's own module
+// evaluation and, with it, the WebSocket connection. Data fetching is
+// deferred to `mountMap`, called only once a lobby actually needs the map.
 //
 // Data: scripts/map/data/map.json (the adjacency/balance graph, ANU-006)
 // and scripts/map/data/map-geometry.json (suburb polygons, ANU-010), both
@@ -36,7 +43,6 @@ const dcLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.get
 const spawnLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-spawns")));
 const tooltip = /** @type {HTMLElement} */ (document.getElementById("map-tooltip"));
 const container = /** @type {HTMLElement} */ (document.getElementById("map-container"));
-const sizeSelect = /** @type {HTMLSelectElement} */ (document.getElementById("lobby-size-select"));
 const attributionEl = /** @type {HTMLElement} */ (document.getElementById("map-attribution"));
 
 /**
@@ -49,62 +55,105 @@ async function fetchJson(url) {
   return res.json();
 }
 
-const fetched = await Promise.all([fetchJson("/map/map.json"), fetchJson("/map/map-geometry.json")]);
-const mapData = /** @type {MapData} */ (fetched[0]);
-const geometry = /** @type {MapGeometry} */ (fetched[1]);
+/** @type {Promise<{mapData: MapData, geometry: MapGeometry}> | null} */
+let dataPromise = null;
+function loadMapData() {
+  if (!dataPromise) {
+    dataPromise = Promise.all([fetchJson("/map/map.json"), fetchJson("/map/map-geometry.json")])
+      .then(([mapData, geometry]) => ({ mapData, geometry }))
+      .catch((err) => {
+        // Don't cache a failed fetch forever — a flaky connection shouldn't
+        // mean "no map until reload"; the next mountMap() call retries.
+        dataPromise = null;
+        throw err;
+      });
+  }
+  return dataPromise;
+}
 
-const sal_codeToName = new Map(mapData.suburbs.map((/** @type {MapSuburb} */ s) => [s.sal_code, s]));
-const nameToSuburb = new Map(mapData.suburbs.map((/** @type {MapSuburb} */ s) => [s.name, s]));
-const nameToDataCenter = new Map(mapData.data_centers.map((/** @type {DataCenter} */ dc) => [dc.name, dc]));
-const sal_codeToGeo = new Map(geometry.suburbs.map((/** @type {GeoSuburb} */ g) => [g.sal_code, g]));
+/** @type {Map<string, MapSuburb>} */
+let sal_codeToName = new Map();
+/** @type {Map<string, MapSuburb>} */
+let nameToSuburb = new Map();
+/** @type {Map<string, DataCenter>} */
+let nameToDataCenter = new Map();
+/** @type {Map<string, GeoSuburb>} */
+let sal_codeToGeo = new Map();
+/** @type {MapData | null} */
+let mapData = null;
+
+let initialised = false;
+// Guards against re-rendering the same lobby's spawn ring on every
+// lobbyState broadcast (presence flips, etc.) — app.js calls mountMap()
+// every time the lobby screen re-renders, not just once.
+let mountedLobbyId = /** @type {string | null} */ (null);
+let currentLobbySize = "";
 
 function cleanLabel(/** @type {string} */ name) {
   return name.replace(/ \(ACT\)$/, "").replace(/^ACT Remainder - (.+?)(?: \[part \d+\])?$/, "Wilderness: $1");
 }
 
-// --- static suburb layer --- //
+/**
+ * Builds the static suburb/data-center layers and wires up pan/zoom/tap —
+ * all independent of any particular lobby, so this only ever runs once per
+ * page load, on the first lobby that mounts the map.
+ * @param {MapData} data
+ * @param {MapGeometry} geometry
+ */
+function initOnce(data, geometry) {
+  if (initialised) return;
+  initialised = true;
 
-for (const geo of geometry.suburbs) {
-  const info = sal_codeToName.get(geo.sal_code);
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", geo.path);
-  path.setAttribute("class", info?.is_remainder ? "suburb remainder" : "suburb");
-  path.dataset.salCode = geo.sal_code;
-  suburbsLayer.appendChild(path);
-}
+  sal_codeToName = new Map(data.suburbs.map((s) => [s.sal_code, s]));
+  nameToSuburb = new Map(data.suburbs.map((s) => [s.name, s]));
+  nameToDataCenter = new Map(data.data_centers.map((dc) => [dc.name, dc]));
+  sal_codeToGeo = new Map(geometry.suburbs.map((g) => [g.sal_code, g]));
 
-// --- data center markers (fixed across lobby sizes) --- //
+  // --- static suburb layer --- //
 
-/** @type {Record<"mega"|"major"|"standard", number>} */
-const MARKER_RADIUS = { mega: 450, major: 320, standard: 220 };
+  for (const geo of geometry.suburbs) {
+    const info = sal_codeToName.get(geo.sal_code);
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", geo.path);
+    path.setAttribute("class", info?.is_remainder ? "suburb remainder" : "suburb");
+    path.dataset.salCode = geo.sal_code;
+    suburbsLayer.appendChild(path);
+  }
 
-for (const dc of mapData.data_centers) {
-  const suburb = nameToSuburb.get(dc.name);
-  if (!suburb) continue; // a data center name that doesn't resolve to a suburb is a data bug, not something to render around
-  const geo = sal_codeToGeo.get(suburb.sal_code);
-  if (!geo) continue;
-  const [x, y] = geo.label_point;
-  const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-  circle.setAttribute("cx", String(x));
-  circle.setAttribute("cy", String(y));
-  circle.setAttribute("r", String(MARKER_RADIUS[dc.tier]));
-  circle.setAttribute("class", `dc-marker dc-marker--${dc.tier}`);
-  circle.dataset.salCode = suburb.sal_code;
-  dcLayer.appendChild(circle);
-}
+  // --- data center markers (fixed across lobby sizes) --- //
 
-// --- spawn ring preview, one lobby size at a time --- //
+  /** @type {Record<"mega"|"major"|"standard", number>} */
+  const MARKER_RADIUS = { mega: 450, major: 320, standard: 220 };
 
-for (const size of Object.keys(mapData.spawn_table_by_lobby_size).sort((a, b) => Number(a) - Number(b))) {
-  const option = document.createElement("option");
-  option.value = size;
-  option.textContent = `${size} players`;
-  sizeSelect.appendChild(option);
+  for (const dc of data.data_centers) {
+    const suburb = nameToSuburb.get(dc.name);
+    if (!suburb) continue; // a data center name that doesn't resolve to a suburb is a data bug, not something to render around
+    const geo = sal_codeToGeo.get(suburb.sal_code);
+    if (!geo) continue;
+    const [x, y] = geo.label_point;
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", String(x));
+    circle.setAttribute("cy", String(y));
+    circle.setAttribute("r", String(MARKER_RADIUS[dc.tier]));
+    circle.setAttribute("class", `dc-marker dc-marker--${dc.tier}`);
+    circle.dataset.salCode = suburb.sal_code;
+    dcLayer.appendChild(circle);
+  }
+
+  // --- attribution --- //
+
+  attributionEl.textContent = `Map data: ${Object.values({
+    ...data.source_attribution,
+    ...geometry.source_attribution,
+  }).join(" · ")}`;
+
+  setupPanZoomAndTap(geometry);
 }
 
 function renderSpawns(/** @type {string} */ lobbySize) {
   spawnLayer.replaceChildren();
-  const entry = mapData.spawn_table_by_lobby_size[lobbySize];
+  currentLobbySize = lobbySize;
+  const entry = mapData?.spawn_table_by_lobby_size[lobbySize];
   if (!entry) return;
   for (const name of entry.spawns) {
     const suburb = nameToSuburb.get(name);
@@ -122,17 +171,28 @@ function renderSpawns(/** @type {string} */ lobbySize) {
   }
 }
 
-sizeSelect.addEventListener("change", () => renderSpawns(sizeSelect.value));
-const defaultSize = "8"; // mid-range lobby size for an illustrative preview
-sizeSelect.value = mapData.spawn_table_by_lobby_size[defaultSize] ? defaultSize : sizeSelect.options[0]?.value ?? "";
-renderSpawns(sizeSelect.value);
+/**
+ * Mounts (or re-targets) the map panel for a specific started lobby —
+ * idempotent per (lobbyId, capacity) pair, since app.js re-renders the
+ * lobby screen on every `lobbyState` broadcast. The spawn-ring preview is
+ * locked to this lobby's own capacity — there's a real lobby here, not an
+ * abstract size picker.
+ * @param {string} lobbyId
+ * @param {number} capacity
+ */
+export async function mountMap(lobbyId, capacity) {
+  const { mapData: data, geometry } = await loadMapData();
+  mapData = data;
+  initOnce(data, geometry);
+  if (mountedLobbyId === lobbyId && currentLobbySize === String(capacity)) return;
+  mountedLobbyId = lobbyId;
+  renderSpawns(String(capacity));
+}
 
-// --- attribution --- //
-
-attributionEl.textContent = `Map data: ${Object.values({
-  ...mapData.source_attribution,
-  ...geometry.source_attribution,
-}).join(" · ")}`;
+/** Clears mount state so a later mountMap() for a different lobby redraws the spawn ring. */
+export function unmountMap() {
+  mountedLobbyId = null;
+}
 
 // --- pan/zoom (pointer events, so it works with mouse, touch and pen alike) --- //
 //
@@ -142,15 +202,20 @@ attributionEl.textContent = `Map data: ${Object.values({
 // the rendered map inside the container — a client-rect-fraction mapping is
 // wrong by exactly the letterbox gap, in whichever axis is boxed. The CTM
 // already encodes the real scale/offset the browser is using, independent
-// of which axis ends up letterboxed at a given viewport size.
+// of which axis ends up letterboxed at a given viewport size. Only called
+// from initOnce, once the lobby screen (and this panel) is already
+// unhidden, so getScreenCTM() has real layout to read.
 
-let viewBox = { ...geometry.urban_view_box };
-const fullBounds = geometry.full_view_box;
+/** @type {ViewBox} */
+let viewBox = { x: 0, y: 0, width: 0, height: 0 };
+/** @type {ViewBox} */
+let fullBounds = { x: 0, y: 0, width: 0, height: 0 };
+/** @type {MapGeometry | null} */
+let activeGeometry = null;
 
 function applyViewBox() {
   svg.setAttribute("viewBox", `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`);
 }
-applyViewBox();
 
 // Keep at least a sliver of the map on screen; don't let pan/zoom lose the
 // board entirely. Width/height stay bounded between a close-in zoom and the
@@ -161,19 +226,9 @@ function clampedDims(/** @type {number} */ width) {
   const minW = fullBounds.width / 20;
   const maxW = fullBounds.width * 1.5;
   const clampedWidth = Math.min(maxW, Math.max(minW, width));
-  const clampedHeight = clampedWidth * (geometry.urban_view_box.height / geometry.urban_view_box.width);
+  const urban = /** @type {MapGeometry} */ (activeGeometry).urban_view_box;
+  const clampedHeight = clampedWidth * (urban.height / urban.width);
   return { width: clampedWidth, height: clampedHeight };
-}
-
-/**
- * @param {number} clientX
- * @param {number} clientY
- */
-function clientToSvgPoint(clientX, clientY) {
-  const ctm = svg.getScreenCTM();
-  if (!ctm) return { x: clientX, y: clientY }; // no layout yet — shouldn't happen once the page has rendered
-  const pt = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse());
-  return { x: pt.x, y: pt.y };
 }
 
 /**
@@ -214,7 +269,6 @@ const activePointers = new Map();
 let dragStart = null;
 let pinchStartDistance = 0;
 let pinchStartWidth = 0;
-let pinchStartHeight = 0;
 let totalDragDistance = 0;
 
 // Pure translation (width/height unchanged), so the px->unit scale is fixed
@@ -231,43 +285,6 @@ function beginDrag(/** @type {number} */ clientX, /** @type {number} */ clientY)
   };
 }
 
-container.addEventListener("pointerdown", (event) => {
-  container.setPointerCapture(event.pointerId);
-  activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-  totalDragDistance = 0;
-  if (activePointers.size === 1) {
-    beginDrag(event.clientX, event.clientY);
-  } else if (activePointers.size === 2) {
-    dragStart = null; // a second finger landed mid-drag: this gesture is now a pinch, not a pan
-    const pts = [...activePointers.values()];
-    pinchStartDistance = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-    pinchStartWidth = viewBox.width;
-    pinchStartHeight = viewBox.height;
-  }
-});
-
-container.addEventListener("pointermove", (event) => {
-  if (!activePointers.has(event.pointerId)) return;
-  activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-
-  if (activePointers.size === 1 && dragStart) {
-    const dxPx = event.clientX - dragStart.clientX;
-    const dyPx = event.clientY - dragStart.clientY;
-    totalDragDistance = Math.hypot(dxPx, dyPx);
-    viewBox.x = dragStart.viewBoxX - dxPx * dragStart.unitsPerPxX;
-    viewBox.y = dragStart.viewBoxY - dyPx * dragStart.unitsPerPxY;
-    applyViewBox();
-  } else if (activePointers.size === 2 && pinchStartDistance > 0) {
-    const pts = [...activePointers.values()];
-    const distance = Math.max(Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y), 1);
-    const scale = pinchStartDistance / distance;
-    const midX = (pts[0].x + pts[1].x) / 2;
-    const midY = (pts[0].y + pts[1].y) / 2;
-    const { width, height } = clampedDims(pinchStartWidth * scale);
-    zoomAroundClientPoint(midX, midY, width, height);
-  }
-});
-
 function endPointer(/** @type {PointerEvent} */ event) {
   activePointers.delete(event.pointerId);
   if (activePointers.size === 0) {
@@ -283,19 +300,6 @@ function endPointer(/** @type {PointerEvent} */ event) {
     pinchStartDistance = 0;
   }
 }
-container.addEventListener("pointerup", endPointer);
-container.addEventListener("pointercancel", endPointer);
-
-container.addEventListener(
-  "wheel",
-  (event) => {
-    event.preventDefault();
-    const zoomFactor = Math.exp(event.deltaY * 0.001);
-    const { width, height } = clampedDims(viewBox.width * zoomFactor);
-    zoomAroundClientPoint(event.clientX, event.clientY, width, height);
-  },
-  { passive: false },
-);
 
 // --- tap/click to inspect (a drag longer than this threshold isn't a tap) --- //
 
@@ -308,8 +312,8 @@ function describe(/** @type {string} */ sal_code) {
   const dc = nameToDataCenter.get(info.name);
   const lines = [];
   if (dc) lines.push(`${dc.tier} data center — ${dc.tflops} TFLOPS`);
-  const currentEntry = mapData.spawn_table_by_lobby_size[sizeSelect.value];
-  if (currentEntry?.spawns.includes(info.name)) lines.push(`Spawn candidate (${sizeSelect.value}-player preview)`);
+  const currentEntry = mapData?.spawn_table_by_lobby_size[currentLobbySize];
+  if (currentEntry?.spawns.includes(info.name)) lines.push(`Spawn candidate (${currentLobbySize}-player lobby)`);
   if (info.is_remainder) lines.push("Wilderness — ownable, no data center or spawn");
   return { name: cleanLabel(info.name), lines };
 }
@@ -335,24 +339,82 @@ function showTooltip(/** @type {string} */ sal_code, /** @type {number} */ clien
   tooltip.hidden = false;
 }
 
-container.addEventListener("click", (event) => {
-  if (totalDragDistance > TAP_THRESHOLD_PX) return; // was a pan, not a tap
-  // event.target is unreliable here: pointerdown calls setPointerCapture on
-  // `container` for panning, which retargets the synthesized click's target
-  // to the capturing element instead of whatever's visually under the
-  // pointer. Hit-test by coordinate instead.
-  const hit = /** @type {SVGElement | null} */ (document.elementFromPoint(event.clientX, event.clientY));
-  const sal_code = hit?.dataset?.salCode;
-  if (selected) selected.classList.remove("selected");
-  if (!sal_code) {
-    tooltip.hidden = true;
-    selected = null;
-    return;
-  }
-  const path = suburbsLayer.querySelector(`[data-sal-code="${CSS.escape(sal_code)}"]`);
-  if (path) {
-    path.classList.add("selected");
-    selected = /** @type {SVGElement} */ (path);
-  }
-  showTooltip(sal_code, event.clientX, event.clientY);
-});
+/** @param {MapGeometry} geometry */
+function setupPanZoomAndTap(geometry) {
+  activeGeometry = geometry;
+  viewBox = { ...geometry.urban_view_box };
+  fullBounds = geometry.full_view_box;
+  applyViewBox();
+
+  container.addEventListener("pointerdown", (event) => {
+    container.setPointerCapture(event.pointerId);
+    activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    totalDragDistance = 0;
+    if (activePointers.size === 1) {
+      beginDrag(event.clientX, event.clientY);
+    } else if (activePointers.size === 2) {
+      dragStart = null; // a second finger landed mid-drag: this gesture is now a pinch, not a pan
+      const pts = [...activePointers.values()];
+      pinchStartDistance = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      pinchStartWidth = viewBox.width;
+    }
+  });
+
+  container.addEventListener("pointermove", (event) => {
+    if (!activePointers.has(event.pointerId)) return;
+    activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    if (activePointers.size === 1 && dragStart) {
+      const dxPx = event.clientX - dragStart.clientX;
+      const dyPx = event.clientY - dragStart.clientY;
+      totalDragDistance = Math.hypot(dxPx, dyPx);
+      viewBox.x = dragStart.viewBoxX - dxPx * dragStart.unitsPerPxX;
+      viewBox.y = dragStart.viewBoxY - dyPx * dragStart.unitsPerPxY;
+      applyViewBox();
+    } else if (activePointers.size === 2 && pinchStartDistance > 0) {
+      const pts = [...activePointers.values()];
+      const distance = Math.max(Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y), 1);
+      const scale = pinchStartDistance / distance;
+      const midX = (pts[0].x + pts[1].x) / 2;
+      const midY = (pts[0].y + pts[1].y) / 2;
+      const { width, height } = clampedDims(pinchStartWidth * scale);
+      zoomAroundClientPoint(midX, midY, width, height);
+    }
+  });
+
+  container.addEventListener("pointerup", endPointer);
+  container.addEventListener("pointercancel", endPointer);
+
+  container.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      const zoomFactor = Math.exp(event.deltaY * 0.001);
+      const { width, height } = clampedDims(viewBox.width * zoomFactor);
+      zoomAroundClientPoint(event.clientX, event.clientY, width, height);
+    },
+    { passive: false },
+  );
+
+  container.addEventListener("click", (event) => {
+    if (totalDragDistance > TAP_THRESHOLD_PX) return; // was a pan, not a tap
+    // event.target is unreliable here: pointerdown calls setPointerCapture on
+    // `container` for panning, which retargets the synthesized click's target
+    // to the capturing element instead of whatever's visually under the
+    // pointer. Hit-test by coordinate instead.
+    const hit = /** @type {SVGElement | null} */ (document.elementFromPoint(event.clientX, event.clientY));
+    const sal_code = hit?.dataset?.salCode;
+    if (selected) selected.classList.remove("selected");
+    if (!sal_code) {
+      tooltip.hidden = true;
+      selected = null;
+      return;
+    }
+    const path = suburbsLayer.querySelector(`[data-sal-code="${CSS.escape(sal_code)}"]`);
+    if (path) {
+      path.classList.add("selected");
+      selected = /** @type {SVGElement} */ (path);
+    }
+    showTooltip(sal_code, event.clientX, event.clientY);
+  });
+}

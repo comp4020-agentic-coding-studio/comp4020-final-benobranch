@@ -99,6 +99,12 @@ h2 {
   display: none;
 }
 
+/* A started lobby's map (ANU-011) isn't usable at the Home/Browse screens'
+   480px cap on desktop — widened just for that case, not every screen. */
+.screen--wide {
+  max-width: 960px;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -178,14 +184,6 @@ button:not(:disabled):hover {
 
 .hud-bar__count {
   color: var(--accent);
-  font-variant-numeric: tabular-nums;
-}
-
-.metric {
-  font-size: 3rem;
-  font-weight: 700;
-  color: var(--accent);
-  margin: 0;
   font-variant-numeric: tabular-nums;
 }
 

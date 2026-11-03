@@ -3,9 +3,10 @@
 // truth instead of each guessing the WebSocket message shape independently.
 //
 // This still isn't game rules — it's the multi-lobby, persistent-identity
-// skeleton ANU-009's Home/Browse/HUD screens render against. The counter is
-// still a throwaway stand-in for real game state, now scoped per lobby
-// instead of global, so lobby isolation is provable.
+// skeleton ANU-009's Home/Browse/HUD screens render against. ANU-005's
+// original throwaway shared-counter stand-in (`bump`/`count`/`lastBumpedBy`)
+// was retired by ANU-011 once a started lobby had something real (the map)
+// to show instead.
 
 export interface ClientHello {
   type: "hello";
@@ -16,10 +17,6 @@ export interface ClientHello {
    * on a first-ever visit.
    */
   token?: string;
-}
-
-export interface ClientBump {
-  type: "bump";
 }
 
 export interface ClientCreateLobby {
@@ -68,7 +65,6 @@ export interface ClientUnwatchLobbies {
 
 export type ClientMessage =
   | ClientHello
-  | ClientBump
   | ClientCreateLobby
   | ClientJoinLobby
   | ClientStartLobby
@@ -86,8 +82,6 @@ export interface LobbyState {
   name: string;
   capacity: number;
   started: boolean;
-  count: number;
-  lastBumpedBy: string | null;
   members: PlayerPresence[];
 }
 
@@ -172,10 +166,6 @@ export function parseClientMessage(raw: string): ClientMessage {
       throw new Error(`'hello.token', if present, must be a string up to ${MAX_TOKEN_LENGTH} characters`);
     }
     return { type: "hello", token };
-  }
-
-  if (type === "bump") {
-    return { type: "bump" };
   }
 
   if (type === "createLobby") {

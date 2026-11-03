@@ -5,11 +5,11 @@
 // counter to persistent identity + multiple lobbies).
 //
 // node:sqlite's DatabaseSync is synchronous, which is what makes handlers
-// like `bump` and `joinLobby` atomic on the event loop: there is no `await`
-// between reading state and writing it, so two players acting at the "same"
-// moment still serialize through Node's single thread rather than racing —
-// see ADR 0001. WAL mode is a durability/read-concurrency setting on top of
-// that, not the concurrency story.
+// like `joinLobby` atomic on the event loop: there is no `await` between
+// reading state and writing it, so two players acting at the "same" moment
+// still serialize through Node's single thread rather than racing — see ADR
+// 0001. WAL mode is a durability/read-concurrency setting on top of that,
+// not the concurrency story.
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -22,8 +22,6 @@ export interface StoredLobby {
   name: string;
   capacity: number;
   started: boolean;
-  count: number;
-  lastBumpedBy: string | null;
 }
 
 export interface StoredMember {
@@ -53,7 +51,6 @@ export interface Store {
   createLobby(name: string, capacity: number, playerId: string, callsign: string): StoredLobby;
   joinLobby(playerId: string, lobbyId: string, callsign: string | undefined): JoinLobbyResult;
   startLobby(lobbyId: string): StoredLobby | null;
-  bump(lobbyId: string, playerId: string): StoredLobby | null;
   close(): void;
 }
 
@@ -79,11 +76,11 @@ export function openStore(dbPath: string): Store {
     "SELECT lobby_id AS lobbyId FROM lobby_members WHERE player_id = ?",
   );
   const selectLobby = db.prepare(`
-    SELECT id AS lobbyId, name, capacity, started, count, last_bumped_by AS lastBumpedBy
+    SELECT id AS lobbyId, name, capacity, started
     FROM lobbies WHERE id = ?
   `);
   const selectAllLobbies = db.prepare(`
-    SELECT id AS lobbyId, name, capacity, started, count, last_bumped_by AS lastBumpedBy
+    SELECT id AS lobbyId, name, capacity, started
     FROM lobbies ORDER BY rowid
   `);
   const selectMembers = db.prepare(`
@@ -101,8 +98,8 @@ export function openStore(dbPath: string): Store {
     "SELECT 1 FROM lobby_members WHERE lobby_id = ? AND lower(name) = lower(?) AND player_id != ?",
   );
   const insertLobby = db.prepare(`
-    INSERT INTO lobbies (id, name, capacity, started, count, last_bumped_by, updated_at)
-    VALUES (?, ?, ?, 0, 0, NULL, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    INSERT INTO lobbies (id, name, capacity, started, updated_at)
+    VALUES (?, ?, ?, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `);
   // player_id is the lobby_members primary key, so a player can only ever be
   // in one lobby at a time: INSERT OR REPLACE on it IS the "move to a
@@ -110,11 +107,6 @@ export function openStore(dbPath: string): Store {
   const upsertMembership = db.prepare(
     "INSERT OR REPLACE INTO lobby_members (lobby_id, player_id, name) VALUES (?, ?, ?)",
   );
-  const updateBump = db.prepare(`
-    UPDATE lobbies
-    SET count = count + 1, last_bumped_by = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-    WHERE id = ?
-  `);
   const updateStart = db.prepare(`
     UPDATE lobbies SET started = 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?
   `);
@@ -202,14 +194,6 @@ export function openStore(dbPath: string): Store {
 
     startLobby(lobbyId) {
       const result = updateStart.run(lobbyId);
-      if (result.changes === 0) return null;
-      return readLobby(lobbyId);
-    },
-
-    bump(lobbyId, playerId) {
-      const member = selectMemberName.get(lobbyId, playerId) as { name: string } | undefined;
-      if (!member) return null; // not a member of this lobby — nothing to attribute the bump to
-      const result = updateBump.run(member.name, lobbyId);
       if (result.changes === 0) return null;
       return readLobby(lobbyId);
     },
@@ -314,6 +298,23 @@ function migrate(db: DatabaseSync): void {
       db.exec("UPDATE lobby_members SET name = 'player' WHERE name IS NULL");
       db.exec("ALTER TABLE players DROP COLUMN name");
       db.exec("PRAGMA user_version = 3");
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
+  // v4 (ANU-011): ANU-005's throwaway shared-counter columns are retired now
+  // that a started lobby shows the real map instead of a bump counter —
+  // dropped, not just unread, per ADR 0002's precedent of not leaving a
+  // migrated-away column lying around.
+  if (version < 4) {
+    db.exec("BEGIN");
+    try {
+      db.exec("ALTER TABLE lobbies DROP COLUMN count");
+      db.exec("ALTER TABLE lobbies DROP COLUMN last_bumped_by");
+      db.exec("PRAGMA user_version = 4");
       db.exec("COMMIT");
     } catch (err) {
       db.exec("ROLLBACK");
