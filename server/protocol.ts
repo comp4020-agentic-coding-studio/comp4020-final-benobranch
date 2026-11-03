@@ -63,18 +63,41 @@ export interface ClientUnwatchLobbies {
   type: "unwatchLobbies";
 }
 
+export interface ClientPlaceUnit {
+  /**
+   * Minimal occupancy primitive (ANU-013) — places a new unit in a suburb.
+   * Eligibility is deliberately "any suburb" here; ANU-014 replaces this
+   * placeholder check with real adjacency/flight rules without changing
+   * this message's shape.
+   */
+  type: "placeUnit";
+  sal_code: string;
+  unitTypeKey: string;
+}
+
+export interface ClientMoveUnit {
+  /** Same "any suburb" placeholder eligibility as placeUnit — see above. */
+  type: "moveUnit";
+  unitId: string;
+  sal_code: string;
+}
+
 export type ClientMessage =
   | ClientHello
   | ClientCreateLobby
   | ClientJoinLobby
   | ClientStartLobby
   | ClientWatchLobbies
-  | ClientUnwatchLobbies;
+  | ClientUnwatchLobbies
+  | ClientPlaceUnit
+  | ClientMoveUnit;
 
 export interface PlayerPresence {
   playerId: string;
   name: string;
   online: boolean;
+  /** Assigned once at join (see ADR 0002's "locked in" precedent for callsign), unique per lobby. */
+  color: string;
 }
 
 export interface LobbyState {
@@ -82,7 +105,27 @@ export interface LobbyState {
   name: string;
   capacity: number;
   started: boolean;
+  /** Stored-timestamp rule (ANU-013/ADR 0001): null until startLobby fires. */
+  startedAt: string | null;
+  /** Elapsed real time since startedAt, scaled by GAME_TIME_SCALE — derived at broadcast time, never from a running timer. */
+  gameElapsedMs: number;
   members: PlayerPresence[];
+  /** sal_code -> owner playerId, sparse (unowned suburbs are simply absent). */
+  ownership: Record<string, string>;
+}
+
+export interface OccupantUnit {
+  id: string;
+  ownerPlayerId: string;
+  sal_code: string;
+  unitTypeKey: string;
+  health: number;
+}
+
+export interface ServerOccupancy {
+  type: "occupancy";
+  lobbyId: string;
+  units: OccupantUnit[];
 }
 
 export interface LobbySummary {
@@ -138,16 +181,44 @@ export type ServerMessage =
   | ServerLobbyState
   | ServerLobbyList
   | ServerNameRequired
-  | ServerError;
+  | ServerError
+  | ServerOccupancy;
 
 const MAX_NAME_LENGTH = 40;
 const MAX_TOKEN_LENGTH = 100;
 const MAX_LOBBY_ID_LENGTH = 64;
+const MAX_SAL_CODE_LENGTH = 16;
+const MAX_UNIT_TYPE_KEY_LENGTH = 32;
+const MAX_UNIT_ID_LENGTH = 64;
 // PLAN.md "Players & spawn balance" (settled by ANU-006): games are 4-12
 // players, minimum 4 to start. Tightened from ANU-008's placeholder 2-16
 // range now that the real rule has landed.
 export const MIN_CAPACITY = 4;
 export const MAX_CAPACITY = 12;
+
+// One color per lobby slot (MAX_CAPACITY of them), assigned at join and
+// locked for the lobby's lifetime — see ADR 0002's precedent for locking
+// callsign the same way. Chosen to stay visually distinct from map.js's
+// existing data-center tier marker colors (mega #ff4fd8, major #ffb23e,
+// standard #6fa8ff — all high-saturation, 36/216/313 degree hues): these 12
+// sit on hues at least 25 degrees from every tier color and at least 30
+// degrees apart from each other, so a player's territory color is never
+// mistaken for a data-center marker (verified in spec/territory.test.ts by
+// Euclidean RGB distance, not just inequality).
+export const PLAYER_COLORS: readonly string[] = [
+  "#ec7813",
+  "#ece513",
+  "#87ec13",
+  "#1aec13",
+  "#13ec78",
+  "#13ece5",
+  "#1387ec",
+  "#131aec",
+  "#7813ec",
+  "#e513ec",
+  "#ec1387",
+  "#ec131a",
+];
 
 function isNonEmptyString(value: unknown, maxLength: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= maxLength;
@@ -208,6 +279,28 @@ export function parseClientMessage(raw: string): ClientMessage {
 
   if (type === "unwatchLobbies") {
     return { type: "unwatchLobbies" };
+  }
+
+  if (type === "placeUnit") {
+    const { sal_code, unitTypeKey } = data as Partial<ClientPlaceUnit>;
+    if (!isNonEmptyString(sal_code, MAX_SAL_CODE_LENGTH)) {
+      throw new Error("'placeUnit' requires a non-empty 'sal_code'");
+    }
+    if (!isNonEmptyString(unitTypeKey, MAX_UNIT_TYPE_KEY_LENGTH)) {
+      throw new Error("'placeUnit' requires a non-empty 'unitTypeKey'");
+    }
+    return { type: "placeUnit", sal_code, unitTypeKey };
+  }
+
+  if (type === "moveUnit") {
+    const { unitId, sal_code } = data as Partial<ClientMoveUnit>;
+    if (!isNonEmptyString(unitId, MAX_UNIT_ID_LENGTH)) {
+      throw new Error("'moveUnit' requires a non-empty 'unitId'");
+    }
+    if (!isNonEmptyString(sal_code, MAX_SAL_CODE_LENGTH)) {
+      throw new Error("'moveUnit' requires a non-empty 'sal_code'");
+    }
+    return { type: "moveUnit", unitId, sal_code };
   }
 
   throw new Error(`unknown message type: ${String(type)}`);

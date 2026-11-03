@@ -70,6 +70,16 @@ a timer silently stops counting exactly when the machine sleeps. The
 skeleton's `counter` table already carries an `updated_at` column for this
 reason, even though the throwaway counter feature doesn't need it yet.
 
+**Generalized by [[ANU-013]]** (`server/time.ts`'s `elapsedMs` helper) once
+more than one subsystem needed this: capture progress ([[ANU-017]]),
+production queues ([[ANU-015]]), unit travel ([[ANU-014]]), and TFLOPS/scrap
+accrual all compute a duration as `elapsedMs(startedAt)` — real wall-clock
+time since a stored ISO timestamp, scaled by a `GAME_TIME_SCALE` env var
+(default `1`). The scale exists so `spec/` can exercise a multi-minute
+design duration (a production queue, a capture bar) in real seconds without
+changing the design numbers themselves — `spec/lib/spawn-server.ts` accepts
+a `gameTimeScale` option that sets this env var on the spawned child.
+
 ### Shutdown
 
 Fly stops a machine by sending SIGTERM. The server closes the WebSocket
