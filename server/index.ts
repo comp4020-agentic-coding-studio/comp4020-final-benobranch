@@ -8,6 +8,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { openStore, type StoredLobby } from "./store.ts";
 import { createTerritory } from "./territory.ts";
 import { createUnits } from "./units.ts";
+import { createFactories } from "./factories.ts";
 import { elapsedMs } from "./time.ts";
 import { renderReadmePage } from "./readme-page.ts";
 import { serveStatic } from "./static-files.ts";
@@ -29,6 +30,7 @@ const MAP_DATA_DIR = process.env.MAP_DATA_DIR ?? "scripts/map/data";
 const store = openStore(`${DATA_DIR}/game.db`);
 const territory = createTerritory(store.db);
 const units = createUnits(store.db);
+const factories = createFactories(store.db, units);
 
 interface ConnMeta {
   playerId: string;
@@ -119,6 +121,15 @@ function broadcastOccupancy(lobbyId: string): void {
   for (const socket of socketsInLobby(lobbyId)) send(socket, message);
 }
 
+function broadcastFactories(lobbyId: string): void {
+  // getFactories settles any builds that finished since the last read, so
+  // this also places the resulting unit (broadcastOccupancy below reflects
+  // it) before reporting queue state.
+  const message: ServerMessage = { type: "factories", lobbyId, factories: factories.getFactories(lobbyId) };
+  for (const socket of socketsInLobby(lobbyId)) send(socket, message);
+  broadcastOccupancy(lobbyId);
+}
+
 // Moves every live socket belonging to `playerId` from `fromLobbyId` to
 // `toLobbyId` (a player has exactly one lobby membership at a time — see
 // store.ts's joinLobby — so every one of their tabs follows the move) and
@@ -187,6 +198,22 @@ const heartbeat = setInterval(() => {
 }, 30_000);
 heartbeat.unref();
 
+// A wake-up to settle+broadcast factory queues that finish with nobody
+// having sent a message in the meantime — holds no build state itself (that
+// lives in `factories`' stored queue_started_at timestamps, read via
+// elapsedMs), so it's not the "armed timer" ADR 0001's stored-timestamp rule
+// warns against: if this tick never fired (e.g. the machine was asleep),
+// the next getFactories/hello call still computes the right elapsed
+// progress from the stored timestamp. Only ticks lobbies with at least one
+// live connection, matching spec/realtime.test.ts's ~1s broadcast target.
+const factoryTicker = setInterval(() => {
+  const liveLobbyIds = new Set([...sockets.values()].map((m) => m.lobbyId).filter((id): id is string => id !== null));
+  for (const lobbyId of liveLobbyIds) {
+    if (store.getLobby(lobbyId)?.started) broadcastFactories(lobbyId);
+  }
+}, 1000);
+factoryTicker.unref();
+
 wss.on("connection", (socket) => {
   alive.add(socket);
   socket.on("pong", () => alive.add(socket));
@@ -208,10 +235,13 @@ wss.on("connection", (socket) => {
       sockets.set(socket, { playerId, lobbyId, registered: true, watchingLobbies: false });
 
       send(socket, { type: "welcome", playerId, token, lobby: lobby ? buildLobbyState(lobby) : null });
-      // A reconnecting client needs current occupancy too, not just lobby
-      // state — occupancy otherwise only arrives on the next place/move
-      // broadcast, which a client that was offline when it happened would miss.
+      // A reconnecting client needs current occupancy and factory state too,
+      // not just lobby state — both otherwise only arrive on the next
+      // change broadcast, which a client that was offline when it happened
+      // would miss. getFactories settles any builds completed while nobody
+      // was connected (the stored-timestamp rule means that's fine).
       if (lobbyId) send(socket, { type: "occupancy", lobbyId, units: units.getOccupancy(lobbyId) });
+      if (lobbyId) send(socket, { type: "factories", lobbyId, factories: factories.getFactories(lobbyId) });
       if (lobbyId) broadcastLobbyState(lobbyId); // this player's online status just changed
       return;
     }
@@ -251,8 +281,13 @@ wss.on("connection", (socket) => {
         // order, against this lobby's own capacity's spawn table.
         const memberPlayerIds = store.getLobbyMembers(lobby.lobbyId).map((m) => m.playerId);
         territory.assignSpawnOwnership(lobby.lobbyId, memberPlayerIds);
+        // One factory per player at their just-assigned spawn (issues/ANU-015.md) —
+        // reads suburb_ownership back rather than recomputing the spawn
+        // table itself, so it can't drift from territory.ts's own result.
+        factories.spawnFactories(lobby.lobbyId, memberPlayerIds);
         broadcastLobbyState(meta.lobbyId);
         broadcastLobbyList(); // the browse list also shows started/not-started
+        broadcastFactories(meta.lobbyId);
       }
       return;
     }
@@ -290,6 +325,28 @@ wss.on("connection", (socket) => {
       return;
     }
 
+    if (message.type === "buildFactory") {
+      if (!meta.lobbyId || !store.getLobby(meta.lobbyId)?.started) return;
+      const result = factories.buildFactory(meta.lobbyId, meta.playerId, message.sal_code);
+      if (!result.ok) {
+        send(socket, { type: "error", message: `buildFactory: ${result.reason}` });
+        return;
+      }
+      broadcastFactories(meta.lobbyId);
+      return;
+    }
+
+    if (message.type === "queueUnit") {
+      if (!meta.lobbyId || !store.getLobby(meta.lobbyId)?.started) return;
+      const result = factories.queueUnit(meta.lobbyId, meta.playerId, message.factoryId, message.unitTypeKey);
+      if (!result.ok) {
+        send(socket, { type: "error", message: `queueUnit: ${result.reason}` });
+        return;
+      }
+      broadcastFactories(meta.lobbyId);
+      return;
+    }
+
     if (message.type === "watchLobbies") {
       meta.watchingLobbies = true;
       send(socket, { type: "lobbyList", lobbies: store.listLobbies().map(buildLobbySummary) });
@@ -322,6 +379,7 @@ server.listen(PORT, "0.0.0.0", () => {
 // stale -wal file for the next boot to replay.
 function shutdown(): void {
   clearInterval(heartbeat);
+  clearInterval(factoryTicker);
   server.close();
   store.close();
   process.exit(0);
