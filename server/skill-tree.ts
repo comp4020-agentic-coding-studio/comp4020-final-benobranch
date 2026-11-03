@@ -75,10 +75,11 @@ export interface SkillTree {
  * the same boot-seeded connection.
  *
  * Stats: both variants keep their base archetype's movement_mode (gated
- * tech upgrades a chassis, not its movement rule) at roughly 1.6-1.75x the
- * base stat line — a real upgrade, not a rounding-error difference, while
- * staying below the base-to-base 2x drone/robot ratio ([[ANU-014]]'s
- * Resolution) so "advanced drone" doesn't just become a reskinned robot.
+ * tech upgrades a chassis, not its movement rule) at 1.5-1.75x the base
+ * stat line (health 1.67x for both; damage 1.5x drone, 1.75x robot) — a real
+ * upgrade, not a rounding-error difference, while staying below the
+ * base-to-base 2x drone/robot ratio ([[ANU-014]]'s Resolution) so "advanced
+ * drone" doesn't just become a reskinned robot.
  */
 export function seedSkillGatedUnitTypes(db: DatabaseSync): void {
   const upsert = db.prepare(`
