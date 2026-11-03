@@ -76,8 +76,29 @@ export interface ClientPlaceUnit {
 }
 
 export interface ClientMoveUnit {
-  /** Same "any suburb" placeholder eligibility as placeUnit — see above. */
+  /**
+   * Relocates an already-placed unit to an undefended suburb. ANU-014
+   * replaces the "any suburb" placeholder eligibility with real movement
+   * rules: unrestricted for a "fly" unit (drones), road-adjacent-to-an-
+   * owned-suburb for a "ground" unit (robots) — see server/units.ts. A
+   * target holding an enemy unit is rejected by moveUnit; use
+   * `attackSuburb` for that.
+   */
   type: "moveUnit";
+  unitId: string;
+  sal_code: string;
+}
+
+export interface ClientAttackSuburb {
+  /**
+   * Sends an already-placed unit at a target suburb, using the same
+   * reachability rule as `moveUnit` (ANU-014: unrestricted for drones,
+   * road-adjacent-to-owned for robots). If the target holds no enemy
+   * units ("undefended"), this behaves like a plain move; otherwise it
+   * resolves combat against the first defender there (stable spawn
+   * order) with a random element — see server/units.ts.
+   */
+  type: "attackSuburb";
   unitId: string;
   sal_code: string;
 }
@@ -90,7 +111,8 @@ export type ClientMessage =
   | ClientWatchLobbies
   | ClientUnwatchLobbies
   | ClientPlaceUnit
-  | ClientMoveUnit;
+  | ClientMoveUnit
+  | ClientAttackSuburb;
 
 export interface PlayerPresence {
   playerId: string;
@@ -120,6 +142,15 @@ export interface OccupantUnit {
   sal_code: string;
   unitTypeKey: string;
   health: number;
+  /**
+   * Both present only while a drone is mid-flight over territory it
+   * doesn't own (ANU-014's "in transit" GUI state) — absent for an
+   * instant/completed move, which is every move as of this issue (no
+   * travel-time system exists yet; see server/units.ts). Robots never
+   * set these since their moves are adjacency-restricted, not flights.
+   */
+  destinationSalCode?: string;
+  moveStartedAt?: string;
 }
 
 export interface ServerOccupancy {
@@ -312,6 +343,17 @@ export function parseClientMessage(raw: string): ClientMessage {
       throw new Error("'moveUnit' requires a non-empty 'sal_code'");
     }
     return { type: "moveUnit", unitId, sal_code };
+  }
+
+  if (type === "attackSuburb") {
+    const { unitId, sal_code } = data as Partial<ClientAttackSuburb>;
+    if (!isNonEmptyString(unitId, MAX_UNIT_ID_LENGTH)) {
+      throw new Error("'attackSuburb' requires a non-empty 'unitId'");
+    }
+    if (!isNonEmptyString(sal_code, MAX_SAL_CODE_LENGTH)) {
+      throw new Error("'attackSuburb' requires a non-empty 'sal_code'");
+    }
+    return { type: "attackSuburb", unitId, sal_code };
   }
 
   throw new Error(`unknown message type: ${String(type)}`);
