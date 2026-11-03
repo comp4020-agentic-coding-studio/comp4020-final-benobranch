@@ -154,7 +154,7 @@ export function openStore(dbPath: string): Store {
   // a new lobby is a fresh game, not a continuation of the old one's.
   const insertMembership = db.prepare(`
     INSERT INTO lobby_members (lobby_id, player_id, name, color, joined_at)
-    VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%f', 'now'))
+    VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(player_id) DO UPDATE SET
       lobby_id = excluded.lobby_id,
       name = excluded.name,
@@ -444,16 +444,24 @@ function migrate(db: DatabaseSync): void {
       // joined_at, assigned in rowid order (the closest proxy to join order
       // available pre-migration — ANU-013 introduces the real joined_at
       // column going forward, as inserted by insertMembership above).
+      // joined_at values are staggered by 1ms per member (computed in JS,
+      // bound as a parameter) rather than each set to strftime('now') — a
+      // whole migration transaction can complete within one SQLite
+      // datetime-function tick, which would give every member in a lobby
+      // the identical joined_at and silently undo the rowid ordering this
+      // backfill is trying to preserve.
       const existingMembers = db
         .prepare("SELECT lobby_id AS lobbyId, player_id AS playerId FROM lobby_members ORDER BY lobby_id, rowid")
         .all() as { lobbyId: string; playerId: string }[];
       const backfillColor = db.prepare(
-        "UPDATE lobby_members SET color = ?, joined_at = strftime('%Y-%m-%dT%H:%M:%f', 'now') WHERE lobby_id = ? AND player_id = ?",
+        "UPDATE lobby_members SET color = ?, joined_at = ? WHERE lobby_id = ? AND player_id = ?",
       );
       const colorIndexByLobby = new Map<string, number>();
+      const backfillBaseMs = Date.now();
       for (const m of existingMembers) {
         const i = colorIndexByLobby.get(m.lobbyId) ?? 0;
-        backfillColor.run(PLAYER_COLORS[i % PLAYER_COLORS.length], m.lobbyId, m.playerId);
+        const joinedAt = new Date(backfillBaseMs + i).toISOString();
+        backfillColor.run(PLAYER_COLORS[i % PLAYER_COLORS.length], joinedAt, m.lobbyId, m.playerId);
         colorIndexByLobby.set(m.lobbyId, i + 1);
       }
 

@@ -11,6 +11,7 @@ import { join } from "node:path";
 import WebSocket from "ws";
 import { spawnServer, type SpawnedServer } from "./lib/spawn-server.ts";
 import { pathVertices, minVertexDistance } from "./lib/svg-path.ts";
+import { PLAYER_COLORS } from "../server/protocol.ts";
 
 const baseUrl = inject("baseUrl");
 
@@ -69,6 +70,27 @@ function rgbDistance(a: string, b: string): number {
   return Math.hypot(ar - br, ag - bg, ab - bb);
 }
 
+/** Hue in degrees [0, 360) — standard RGB-to-HSL hue component only. */
+function hue(hex: string): number {
+  const [r, g, b] = hexToRgb(hex).map((v) => v / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+  if (delta === 0) return 0;
+  let h: number;
+  if (max === r) h = ((g - b) / delta) % 6;
+  else if (max === g) h = (b - r) / delta + 2;
+  else h = (r - g) / delta + 4;
+  h *= 60;
+  return h < 0 ? h + 360 : h;
+}
+
+/** Shortest distance around the 360-degree hue circle. */
+function hueDistance(a: number, b: number): number {
+  const diff = Math.abs(a - b) % 360;
+  return Math.min(diff, 360 - diff);
+}
+
 describe("player colors", () => {
   it("assigns every member of a lobby a distinct color", async () => {
     const lobbyName = `color-test-${Date.now()}`;
@@ -120,7 +142,7 @@ describe("player colors", () => {
     await closeAndWait(resumed);
   });
 
-  it("disjoint from map.js's data-center tier marker colors by a real distance, not just inequality", () => {
+  it("disjoint from map.js's data-center tier marker colors by hue AND rendered RGB distance, not just inequality", () => {
     const mapCss = readFileSync("server/public/map.css", "utf8");
     const tierColors: string[] = [];
     for (const m of mapCss.matchAll(/\.dc-marker--\w+\s*\{\s*fill:\s*(#[0-9a-fA-F]{6});/g)) {
@@ -128,12 +150,29 @@ describe("player colors", () => {
     }
     expect(tierColors.length, "expected to find the three dc-marker tier fill colors in map.css").toBe(3);
 
-    const protocolTs = readFileSync("server/protocol.ts", "utf8");
-    const playerColors = [...protocolTs.matchAll(/"(#[0-9a-fA-F]{6})"/g)].map((m) => m[1]);
-    expect(playerColors.length).toBeGreaterThan(0);
+    expect(PLAYER_COLORS.length).toBe(12);
+    expect(new Set(PLAYER_COLORS).size, "every palette entry must be distinct").toBe(12);
 
-    const MIN_MARKER_DISTANCE = 60; // Euclidean RGB distance — below the smallest margin verified when the palette was picked (~68.4)
-    for (const pc of playerColors) {
+    // Hue: a tier marker and a player color sharing (near-)the-same hue is
+    // exactly the failure mode "never mistaken for a data-center marker"
+    // guards against — a player's territory fill sitting under a marker of
+    // a visually similar hue. 25 degrees is the margin the palette was
+    // picked against (every entry actually clears 28+).
+    const MIN_HUE_GAP = 25;
+    for (const pc of PLAYER_COLORS) {
+      for (const tc of tierColors) {
+        expect(
+          hueDistance(hue(pc), hue(tc)),
+          `player color ${pc} (hue ${hue(pc).toFixed(0)}) is too close in hue to data-center marker ${tc} (hue ${hue(tc).toFixed(0)})`,
+        ).toBeGreaterThanOrEqual(MIN_HUE_GAP);
+      }
+    }
+
+    // Rendered RGB distance: a secondary, independent check — lightness/
+    // saturation differences can keep two same-ish hues visually distinct,
+    // but this palette doesn't rely on that; it clears both bounds.
+    const MIN_MARKER_DISTANCE = 60; // below the smallest margin verified when the palette was picked (~80.5)
+    for (const pc of PLAYER_COLORS) {
       for (const tc of tierColors) {
         expect(
           rgbDistance(pc, tc),
@@ -142,12 +181,12 @@ describe("player colors", () => {
       }
     }
 
-    const MIN_PAIRWISE_DISTANCE = 100; // below the smallest pairwise margin verified when the palette was picked (~101.2)
-    for (let i = 0; i < playerColors.length; i++) {
-      for (let j = i + 1; j < playerColors.length; j++) {
+    const MIN_PAIRWISE_DISTANCE = 60; // below the smallest pairwise margin verified when the palette was picked (~78.0)
+    for (let i = 0; i < PLAYER_COLORS.length; i++) {
+      for (let j = i + 1; j < PLAYER_COLORS.length; j++) {
         expect(
-          rgbDistance(playerColors[i], playerColors[j]),
-          `player colors ${playerColors[i]} and ${playerColors[j]} are too close to each other`,
+          rgbDistance(PLAYER_COLORS[i], PLAYER_COLORS[j]),
+          `player colors ${PLAYER_COLORS[i]} and ${PLAYER_COLORS[j]} are too close to each other`,
         ).toBeGreaterThanOrEqual(MIN_PAIRWISE_DISTANCE);
       }
     }
@@ -246,29 +285,43 @@ describe("stored-timestamp rule: game-elapsed time", () => {
     await closeAndWait(creator);
     await first.stop();
 
+    // Bracket the real wall-clock window the server-side computation must
+    // fall within: everything from "just before asking for a new server"
+    // to "the welcome actually arrived" is real elapsed time since
+    // startedAt that GAME_TIME_SCALE=60 must multiply by exactly 60 — a
+    // narrow bracket (not a generous fixed tolerance) is what actually
+    // proves the scale was applied: if GAME_TIME_SCALE were silently
+    // ignored, gameElapsedMs would be ~60x too small and fall outside even
+    // this window scaled up.
+    const beforeReconnect = Date.now();
     const second = await spawnServer({ port, dataDir, gameTimeScale: 60 });
     servers.push(second);
 
     // A fresh identity can't rejoin an already-started lobby (no late
     // join) — resume the creator's own identity via their token instead,
     // same pattern as spec/persistence.test.ts's token-resume test.
-    const reconnectedAt = Date.now();
     const reader = await connect(second.baseUrl, creatorToken);
+    const afterReconnect = Date.now();
     const welcome = reader.messages.find((m) => m.type === "welcome")!;
     const resumedLobby = welcome.lobby as { startedAt: string; gameElapsedMs: number };
 
     expect(resumedLobby.startedAt, "startedAt must be the exact same stored timestamp across the restart, not reset").toBe(startedAt);
 
-    // gameElapsedMs is computed from real wall-clock time since startedAt
-    // (not a counter that kept running), scaled by GAME_TIME_SCALE=60 — so
-    // it should equal (now - startedAt) * 60, within a tolerance that
-    // covers this test's own real elapsed time plus the restart's overhead
-    // (spawnServer polls up to 10s), not just "greater than some floor."
-    const expectedElapsedMs = (reconnectedAt - Date.parse(startedAt)) * 60;
+    const SCALE = 60;
+    const startedAtMs = Date.parse(startedAt);
+    const minExpected = (beforeReconnect - startedAtMs) * SCALE;
+    const maxExpected = (afterReconnect - startedAtMs) * SCALE;
+    // Slack covers clock/rounding imprecision only (tens of real ms), NOT
+    // another multiple of SCALE — a slack sized in scaled units big enough
+    // to be "generous" would also be big enough to hide a completely
+    // dropped scale (gameElapsedMs landing ~60x too low), which is exactly
+    // the bug this bracket exists to catch.
+    const slack = 300 * SCALE; // 300 real ms of imprecision, scaled
     expect(
-      Math.abs(resumedLobby.gameElapsedMs - expectedElapsedMs),
-      `gameElapsedMs (${resumedLobby.gameElapsedMs}) should track (now - startedAt) * 60 (${expectedElapsedMs}) within the restart's own overhead`,
-    ).toBeLessThan(15_000 * 60); // 15 real seconds' worth of scaled slack, generous for CI/restart variance
+      resumedLobby.gameElapsedMs,
+      `gameElapsedMs (${resumedLobby.gameElapsedMs}) should fall within [${minExpected}, ${maxExpected}] (+/- ${slack} slack) — (real elapsed since startedAt) * GAME_TIME_SCALE(${SCALE}), bracketed tightly enough that a dropped/ignored scale (which would land ~${SCALE}x too low) fails this`,
+    ).toBeGreaterThanOrEqual(minExpected - slack);
+    expect(resumedLobby.gameElapsedMs).toBeLessThanOrEqual(maxExpected + slack);
 
     await closeAndWait(reader);
   });

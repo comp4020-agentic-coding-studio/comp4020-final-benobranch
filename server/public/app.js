@@ -199,7 +199,13 @@ function renderLobbyScreen(/** @type {LobbyState} */ lobby) {
   screens.lobby.classList.toggle("screen--wide", lobby.started);
   mapPanelEl.hidden = !lobby.started;
   if (lobby.started) {
-    mountMap(lobby.lobbyId, lobby.capacity);
+    // The spawn ring preview must match the spawn table the SERVER actually
+    // used to auto-own suburbs at kickoff (issues/ANU-013.md), which is
+    // keyed by the real player count at start time, not the lobby's
+    // configured capacity — a 12-capacity lobby started with 4 players owns
+    // the 4-player ring, not the first 4 entries of the 12-player one.
+    // Membership is frozen once started, so lobby.members.length is stable.
+    mountMap(lobby.lobbyId, lobby.members.length);
   } else {
     unmountMap();
   }

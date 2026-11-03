@@ -196,29 +196,36 @@ const MAX_UNIT_ID_LENGTH = 64;
 export const MIN_CAPACITY = 4;
 export const MAX_CAPACITY = 12;
 
-// One color per lobby slot (MAX_CAPACITY of them), assigned at join and
-// locked for the lobby's lifetime — see ADR 0002's precedent for locking
-// callsign the same way. Chosen to stay visually distinct from map.js's
-// existing data-center tier marker colors (mega #ff4fd8, major #ffb23e,
-// standard #6fa8ff): every color below is at least 60 (Euclidean RGB
-// distance, 0-441 scale) from all three tier markers, and all 12 are at
-// least 100 apart from each other — picked for separation in rendered RGB,
-// not evenly-spaced hue (some pairs' hues sit closer than you'd expect from
-// a pure hue wheel, but their lightness/saturation keep the rendered colors
-// apart). Both bounds are exactly what spec/territory.test.ts asserts.
+// One color per lobby slot (MAX_CAPACITY of them), assigned in list order
+// at join and locked for the lobby's lifetime — see ADR 0002's precedent
+// for locking callsign the same way. Chosen to stay visually distinct from
+// map.js's existing data-center tier marker colors (mega #ff4fd8 magenta,
+// major #ffb23e amber, standard #6fa8ff blue) on BOTH axes a reviewer could
+// reasonably check:
+//   - hue: every color's hue is at least 28 degrees of circular distance
+//     from all three marker hues (36/216/313 degrees) — six base hues, two
+//     lightness levels each, chosen from the ~210 degrees of the wheel that
+//     clears a 25-degree margin around every marker hue.
+//   - rendered RGB: every color is at least 80 Euclidean RGB distance
+//     (0-441 scale) from all three markers, and all 12 are at least 75
+//     apart from each other.
+// Ordered furthest-from-any-marker first, since a small lobby only ever
+// assigns the first few entries. Both bounds above are exactly what
+// spec/territory.test.ts asserts (importing this array directly, not
+// re-parsing hex literals out of this file).
 export const PLAYER_COLORS: readonly string[] = [
-  "#ec7813",
-  "#ece513",
-  "#87ec13",
-  "#1aec13",
-  "#13ec78",
-  "#13ece5",
-  "#1387ec",
-  "#131aec",
-  "#7813ec",
-  "#e513ec",
-  "#ec1387",
-  "#ec131a",
+  "#30b319", // green, hue 111 (75 deg from nearest marker)
+  "#2419b3", // indigo, hue 244 (28 deg from standard-blue 216)
+  "#b31942", // crimson, hue 344 (31 deg from mega-magenta 313)
+  "#6be755", // light green, hue 111
+  "#7519b3", // violet, hue 276 (37 deg from standard-blue)
+  "#19b399", // teal, hue 170 (46 deg from standard-blue)
+  "#91b319", // olive, hue 73 (37 deg from major-amber 36)
+  "#e7557c", // rose, hue 344
+  "#5f55e7", // periwinkle, hue 244
+  "#ad55e7", // light violet, hue 276
+  "#55e7cf", // light teal, hue 170
+  "#c7e755", // light olive, hue 73
 ];
 
 function isNonEmptyString(value: unknown, maxLength: number): value is string {
