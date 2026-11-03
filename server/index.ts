@@ -279,6 +279,17 @@ wss.on("connection", (socket) => {
       return;
     }
 
+    if (message.type === "attackSuburb") {
+      if (!meta.lobbyId || !store.getLobby(meta.lobbyId)?.started) return;
+      const result = units.attackSuburb(meta.lobbyId, meta.playerId, message.unitId, message.sal_code);
+      if (!result.ok) {
+        send(socket, { type: "error", message: `attackSuburb: ${result.reason}` });
+        return;
+      }
+      broadcastOccupancy(meta.lobbyId);
+      return;
+    }
+
     if (message.type === "watchLobbies") {
       meta.watchingLobbies = true;
       send(socket, { type: "lobbyList", lobbies: store.listLobbies().map(buildLobbySummary) });

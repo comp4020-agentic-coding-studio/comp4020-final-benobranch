@@ -116,9 +116,10 @@ one number doing both jobs.
   - misc perks (scouting, defense bonuses, path efficiency, more scrap per
     kill, faster zone capture, etc. — see [[ANU-016]]).
 - Attack = send units from an owned suburb into an adjacent one (adjacency
-  as defined above; drones ignore this restriction — see [[ANU-014]]);
-  resolution rule still TBD (see Open decisions — this is shared with the
-  original plan's "combat rule" question).
+  as defined above; drones ignore this restriction — see [[ANU-014]]).
+  Resolution rule (decided in [[ANU-014]], confirmed with the user via
+  AskUserQuestion): random element — attacker damage varies +/-20% per
+  hit, floored at 1, rather than a fixed deterministic value.
 
 ## Art direction
 
@@ -293,8 +294,6 @@ that ships in the repo.
   diverge from.
 
 **Carried over from the original generic plan, still unresolved:**
-- **Combat rule.** Deterministic (attacker units vs defender units) or with
-  randomness?
 - **Offline players.** Suggested: units/compute regenerate only while
   online; territory stays owned while away but stays attackable.
 - **Exact numbers:** TFLOPS-to-research-speed curve, unit production rates,

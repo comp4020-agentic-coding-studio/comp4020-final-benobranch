@@ -92,7 +92,13 @@ it("rejects placing a unit in a suburb that doesn't exist", async () => {
 it("moves a placed unit to a different real suburb", async () => {
   const { creator } = await createStartedLobby(`occupancy-move-${Date.now()}`);
 
-  send(creator, { type: "placeUnit", sal_code: REAL_SAL_CODE, unitTypeKey: "robot" });
+  // A drone, not a robot: this test exercises the move primitive itself
+  // (ANU-013), not movement-mode reachability rules — those are ANU-014's
+  // and are covered directly against server/units.ts in spec/units.test.ts.
+  // REAL_SAL_CODE/ANOTHER_REAL_SAL_CODE are arbitrary map suburbs with no
+  // guaranteed road adjacency to each other or to this player's spawn, so
+  // a robot here would now be rejected as unreachable.
+  send(creator, { type: "placeUnit", sal_code: REAL_SAL_CODE, unitTypeKey: "drone" });
   const placed = await waitFor(creator, (m) => m.type === "occupancy" && (m.units as { sal_code: string }[]).some((u) => u.sal_code === REAL_SAL_CODE));
   const unitId = (placed.units as { id: string; sal_code: string }[]).find((u) => u.sal_code === REAL_SAL_CODE)!.id;
 
