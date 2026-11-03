@@ -199,7 +199,19 @@ function renderLobbyScreen(/** @type {LobbyState} */ lobby) {
   screens.lobby.classList.toggle("screen--wide", lobby.started);
   mapPanelEl.hidden = !lobby.started;
   if (lobby.started) {
-    mountMap(lobby.lobbyId, lobby.capacity);
+    // The spawn ring preview must match the spawn table the SERVER actually
+    // used to auto-own suburbs at kickoff (issues/ANU-013.md), which is
+    // keyed by the real player count at start time, not the lobby's
+    // configured capacity — a 12-capacity lobby started with 4 players owns
+    // the 4-player ring, not the first 4 entries of the 12-player one.
+    // Clamped to the spawn table's own 4-12 range: startLobby doesn't
+    // actually enforce PLAN.md's 4-player minimum server-side (there's no
+    // bot-fill yet — see issues/ANU-009.md), so a lobby can start with
+    // fewer than 4 members; members.length can also shrink after kickoff
+    // if someone leaves this lobby for another (server/store.ts's
+    // lobby-switch path doesn't block that). Either way members.length
+    // isn't guaranteed to be a valid spawn-table key on its own.
+    mountMap(lobby.lobbyId, Math.max(4, Math.min(12, lobby.members.length)));
   } else {
     unmountMap();
   }

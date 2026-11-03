@@ -14,6 +14,9 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import { PLAYER_COLORS } from "./protocol.ts";
+import { createPerkHook } from "./perks.ts";
+import { seedBaseUnitTypes } from "./units.ts";
 
 export const DEFAULT_LOBBY_ID = "default";
 
@@ -22,12 +25,27 @@ export interface StoredLobby {
   name: string;
   capacity: number;
   started: boolean;
+  /**
+   * Stored-timestamp rule (ADR 0001 / issues/ANU-013.md): set once, the
+   * first time this lobby starts, never reset by a later no-op startLobby
+   * call. Game-elapsed time is derived from this at read/broadcast time
+   * (server/time.ts's elapsedMs), never from a running timer.
+   */
+  startedAt: string | null;
 }
 
 export interface StoredMember {
   playerId: string;
   /** This player's locked-in callsign for this specific lobby — see ADR 0002. */
   name: string;
+  /** Assigned once at join, unique per lobby, locked for its lifetime — same precedent as callsign. */
+  color: string;
+}
+
+export interface MemberEconomy {
+  scrap: number;
+  tflops: number;
+  tflopsLastAccruedAt: string | null;
 }
 
 export interface ResolvedPlayer {
@@ -45,12 +63,26 @@ export interface Store {
   resolvePlayer(token: string | undefined): ResolvedPlayer;
   getCurrentLobbyId(playerId: string): string | null;
   getLobby(lobbyId: string): StoredLobby | null;
+  /** Ordered by join time — stable across reconnects, unlike rowid (see joinLobby's note on INSERT OR REPLACE). */
   getLobbyMembers(lobbyId: string): StoredMember[];
   getMemberName(lobbyId: string, playerId: string): string | null;
+  getMemberColor(lobbyId: string, playerId: string): string | null;
+  getMemberEconomy(lobbyId: string, playerId: string): MemberEconomy | null;
   listLobbies(): StoredLobby[];
   createLobby(name: string, capacity: number, playerId: string, callsign: string): StoredLobby;
   joinLobby(playerId: string, lobbyId: string, callsign: string | undefined): JoinLobbyResult;
   startLobby(lobbyId: string): StoredLobby | null;
+  perks: import("./perks.ts").PerkHook;
+  /**
+   * The single shared DatabaseSync connection (ADR 0001: one process, one
+   * connection, no `await` between read and write in a handler) — exposed
+   * so territory.ts/units.ts/factories.ts/skill-tree.ts (per this issue's
+   * file-layout convention) can prepare statements against their own
+   * tables without opening a second connection, which would reintroduce
+   * the interleaving ADR 0001 relies on DatabaseSync's synchronous,
+   * single-connection shape to prevent.
+   */
+  db: DatabaseSync;
   close(): void;
 }
 
@@ -64,6 +96,7 @@ export function openStore(dbPath: string): Store {
   db.exec("PRAGMA foreign_keys = ON");
 
   migrate(db);
+  seedBaseUnitTypes(db);
 
   const insertPlayer = db.prepare(
     "INSERT INTO players (token, player_id, created_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
@@ -76,20 +109,29 @@ export function openStore(dbPath: string): Store {
     "SELECT lobby_id AS lobbyId FROM lobby_members WHERE player_id = ?",
   );
   const selectLobby = db.prepare(`
-    SELECT id AS lobbyId, name, capacity, started
+    SELECT id AS lobbyId, name, capacity, started, started_at AS startedAt
     FROM lobbies WHERE id = ?
   `);
   const selectAllLobbies = db.prepare(`
-    SELECT id AS lobbyId, name, capacity, started
+    SELECT id AS lobbyId, name, capacity, started, started_at AS startedAt
     FROM lobbies ORDER BY rowid
   `);
+  // joined_at (not rowid) orders members: INSERT OR REPLACE (below) deletes
+  // and reinserts a row on every reconnect, which would otherwise reorder
+  // members by rowid on every reconnect — join order needs to stay stable
+  // since ANU-013's spawn-ownership-at-kickoff assigns spawns by it.
   const selectMembers = db.prepare(`
-    SELECT player_id AS playerId, name FROM lobby_members WHERE lobby_id = ?
+    SELECT player_id AS playerId, name, color FROM lobby_members
+    WHERE lobby_id = ? ORDER BY joined_at, player_id
   `);
-  const selectMemberName = db.prepare(
-    "SELECT name FROM lobby_members WHERE lobby_id = ? AND player_id = ?",
+  const selectMemberRow = db.prepare(
+    "SELECT name, color FROM lobby_members WHERE lobby_id = ? AND player_id = ?",
+  );
+  const selectMemberEconomy = db.prepare(
+    "SELECT scrap, tflops, tflops_last_accrued_at AS tflopsLastAccruedAt FROM lobby_members WHERE lobby_id = ? AND player_id = ?",
   );
   const countMembers = db.prepare("SELECT COUNT(*) AS n FROM lobby_members WHERE lobby_id = ?");
+  const selectUsedColors = db.prepare("SELECT color FROM lobby_members WHERE lobby_id = ?");
   // Case-insensitive, trimmed-at-the-call-site comparison: this lobby's
   // callsigns double as how the brief's "the app tells them apart"
   // requirement is satisfied within a game, so two members reading as the
@@ -98,17 +140,46 @@ export function openStore(dbPath: string): Store {
     "SELECT 1 FROM lobby_members WHERE lobby_id = ? AND lower(name) = lower(?) AND player_id != ?",
   );
   const insertLobby = db.prepare(`
-    INSERT INTO lobbies (id, name, capacity, started, updated_at)
-    VALUES (?, ?, ?, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    INSERT INTO lobbies (id, name, capacity, started, started_at, updated_at)
+    VALUES (?, ?, ?, 0, NULL, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `);
-  // player_id is the lobby_members primary key, so a player can only ever be
-  // in one lobby at a time: INSERT OR REPLACE on it IS the "move to a
-  // different lobby" operation, atomically, in one statement.
-  const upsertMembership = db.prepare(
-    "INSERT OR REPLACE INTO lobby_members (lobby_id, player_id, name) VALUES (?, ?, ?)",
+  // First join to a lobby, OR a player who already belongs to a different
+  // lobby creating/joining this one (player_id is lobby_members' primary
+  // key — a player has exactly one membership at a time, so this IS the
+  // "switch lobby" operation). ON CONFLICT(player_id), not a plain INSERT:
+  // a plain INSERT throws UNIQUE constraint failed the moment an existing
+  // member of lobby A creates/joins lobby B (the ordinary Server Browse
+  // flow) — uncaught, that crashes the ws message handler. The conflict
+  // branch explicitly resets economy/perk columns to their defaults, since
+  // a new lobby is a fresh game, not a continuation of the old one's.
+  const insertMembership = db.prepare(`
+    INSERT INTO lobby_members (lobby_id, player_id, name, color, joined_at)
+    VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    ON CONFLICT(player_id) DO UPDATE SET
+      lobby_id = excluded.lobby_id,
+      name = excluded.name,
+      color = excluded.color,
+      joined_at = excluded.joined_at,
+      scrap = 0,
+      tflops = 0,
+      tflops_last_accrued_at = NULL,
+      perk_factory_build_speed_multiplier = 1,
+      perk_factory_build_cost_multiplier = 1,
+      perk_scrap_per_kill_multiplier = 1,
+      perk_capture_speed_multiplier = 1,
+      perk_data_transfer_speed_multiplier = 1
+  `);
+  // Reconnect / re-send of createLobby|joinLobby for a lobby already joined:
+  // touches only name/color (both already locked and unchanged in practice —
+  // see joinLobby below), never economy columns. An UPDATE, not INSERT OR
+  // REPLACE, which would delete-and-reinsert the row and reset scrap/tflops/
+  // perk multipliers to their defaults on every reconnect.
+  const touchMembership = db.prepare(
+    "UPDATE lobby_members SET name = ?, color = ? WHERE lobby_id = ? AND player_id = ?",
   );
   const updateStart = db.prepare(`
-    UPDATE lobbies SET started = 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?
+    UPDATE lobbies SET started = 1, started_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE id = ? AND started = 0
   `);
 
   // SQLite has no boolean type — `started` is stored as 0/1 and converted
@@ -116,6 +187,13 @@ export function openStore(dbPath: string): Store {
   function readLobby(lobbyId: string): StoredLobby | null {
     const row = selectLobby.get(lobbyId) as (Omit<StoredLobby, "started"> & { started: number }) | undefined;
     return row ? { ...row, started: row.started !== 0 } : null;
+  }
+
+  function assignColor(lobbyId: string): string {
+    const used = new Set((selectUsedColors.all(lobbyId) as { color: string }[]).map((r) => r.color));
+    const free = PLAYER_COLORS.find((c) => !used.has(c));
+    if (!free) throw new Error(`no free color left in a lobby of capacity ${PLAYER_COLORS.length}`);
+    return free;
   }
 
   return {
@@ -142,8 +220,18 @@ export function openStore(dbPath: string): Store {
     },
 
     getMemberName(lobbyId, playerId) {
-      const row = selectMemberName.get(lobbyId, playerId) as { name: string } | undefined;
+      const row = selectMemberRow.get(lobbyId, playerId) as { name: string } | undefined;
       return row?.name ?? null;
+    },
+
+    getMemberColor(lobbyId, playerId) {
+      const row = selectMemberRow.get(lobbyId, playerId) as { color: string } | undefined;
+      return row?.color ?? null;
+    },
+
+    getMemberEconomy(lobbyId, playerId) {
+      const row = selectMemberEconomy.get(lobbyId, playerId) as MemberEconomy | undefined;
+      return row ?? null;
     },
 
     listLobbies() {
@@ -156,7 +244,7 @@ export function openStore(dbPath: string): Store {
       insertLobby.run(lobbyId, name, capacity);
       // The creator is this lobby's first member, so there's nobody to
       // collide with — no name-taken check needed on creation.
-      upsertMembership.run(lobbyId, playerId, callsign);
+      insertMembership.run(lobbyId, playerId, callsign, assignColor(lobbyId));
       const lobby = readLobby(lobbyId);
       if (!lobby) throw new Error("lobby vanished immediately after insert");
       return lobby;
@@ -166,8 +254,8 @@ export function openStore(dbPath: string): Store {
       const lobby = readLobby(lobbyId);
       if (!lobby) return { ok: false, reason: "not-found" };
 
-      const existingName = selectMemberName.get(lobbyId, playerId) as { name: string } | undefined;
-      const isNewMember = !existingName;
+      const existing = selectMemberRow.get(lobbyId, playerId) as { name: string; color: string } | undefined;
+      const isNewMember = !existing;
 
       // "No late join once a game begins" (PLAN.md, settled by ANU-006): a
       // started lobby only still accepts its own existing members (e.g. a
@@ -176,9 +264,12 @@ export function openStore(dbPath: string): Store {
 
       if (!isNewMember) {
         // Reconnect, or switching back to a lobby already joined: the
-        // callsign is already locked — ignore whatever (if anything) was
-        // sent and keep it, per ADR 0002.
-        upsertMembership.run(lobbyId, playerId, existingName.name);
+        // callsign and color are already locked — ignore whatever (if
+        // anything) was sent and keep them, per ADR 0002. An UPDATE that
+        // writes back the same values, not INSERT OR REPLACE, which would
+        // delete-and-reinsert the row and reset economy/perk columns to
+        // their defaults (see touchMembership's comment above).
+        touchMembership.run(existing.name, existing.color, lobbyId, playerId);
         return { ok: true, lobby };
       }
 
@@ -188,15 +279,23 @@ export function openStore(dbPath: string): Store {
       if (!callsign) return { ok: false, reason: "name-required", lobbyId };
       if (selectNameTaken.get(lobbyId, callsign, playerId)) return { ok: false, reason: "name-taken" };
 
-      upsertMembership.run(lobbyId, playerId, callsign);
+      insertMembership.run(lobbyId, playerId, callsign, assignColor(lobbyId));
       return { ok: true, lobby };
     },
 
     startLobby(lobbyId) {
+      // WHERE started = 0 in updateStart's SQL makes this idempotent: a
+      // second startLobby call for an already-started lobby is a no-op,
+      // changes === 0, so startedAt is never clobbered by a later call —
+      // the stored-timestamp rule (ADR 0001) depends on startedAt being
+      // set exactly once.
       const result = updateStart.run(lobbyId);
       if (result.changes === 0) return null;
       return readLobby(lobbyId);
     },
+
+    perks: createPerkHook(db),
+    db,
 
     close(): void {
       db.close();
@@ -315,6 +414,141 @@ function migrate(db: DatabaseSync): void {
       db.exec("ALTER TABLE lobbies DROP COLUMN count");
       db.exec("ALTER TABLE lobbies DROP COLUMN last_bumped_by");
       db.exec("PRAGMA user_version = 4");
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
+  // v5 (ANU-013): the shared foundation ANU-014 through ANU-017 build on —
+  // one bump covering every table/column all four downstream issues need,
+  // so they don't each add their own (colliding) user_version bump. See
+  // issues/ANU-013.md's Done-when for the full rationale per piece.
+  if (version < 5) {
+    db.exec("BEGIN");
+    try {
+      // --- per-member color, economy, perk multipliers --- //
+      db.exec("ALTER TABLE lobby_members ADD COLUMN color TEXT");
+      db.exec("ALTER TABLE lobby_members ADD COLUMN joined_at TEXT");
+      db.exec("ALTER TABLE lobby_members ADD COLUMN scrap INTEGER NOT NULL DEFAULT 0");
+      db.exec("ALTER TABLE lobby_members ADD COLUMN tflops INTEGER NOT NULL DEFAULT 0");
+      db.exec("ALTER TABLE lobby_members ADD COLUMN tflops_last_accrued_at TEXT");
+      db.exec("ALTER TABLE lobby_members ADD COLUMN perk_factory_build_speed_multiplier REAL NOT NULL DEFAULT 1");
+      db.exec("ALTER TABLE lobby_members ADD COLUMN perk_factory_build_cost_multiplier REAL NOT NULL DEFAULT 1");
+      db.exec("ALTER TABLE lobby_members ADD COLUMN perk_scrap_per_kill_multiplier REAL NOT NULL DEFAULT 1");
+      db.exec("ALTER TABLE lobby_members ADD COLUMN perk_capture_speed_multiplier REAL NOT NULL DEFAULT 1");
+      db.exec("ALTER TABLE lobby_members ADD COLUMN perk_data_transfer_speed_multiplier REAL NOT NULL DEFAULT 1");
+
+      // Backfill: existing members (pre-color schema) get a color and a
+      // joined_at, assigned in rowid order (the closest proxy to join order
+      // available pre-migration — ANU-013 introduces the real joined_at
+      // column going forward, as inserted by insertMembership above).
+      // joined_at values are staggered by 1ms per member (computed in JS,
+      // bound as a parameter) rather than each set to strftime('now') — a
+      // whole migration transaction can complete within one SQLite
+      // datetime-function tick, which would give every member in a lobby
+      // the identical joined_at and silently undo the rowid ordering this
+      // backfill is trying to preserve.
+      const existingMembers = db
+        .prepare("SELECT lobby_id AS lobbyId, player_id AS playerId FROM lobby_members ORDER BY lobby_id, rowid")
+        .all() as { lobbyId: string; playerId: string }[];
+      const backfillColor = db.prepare(
+        "UPDATE lobby_members SET color = ?, joined_at = ? WHERE lobby_id = ? AND player_id = ?",
+      );
+      const colorIndexByLobby = new Map<string, number>();
+      const backfillBaseMs = Date.now();
+      for (const m of existingMembers) {
+        const i = colorIndexByLobby.get(m.lobbyId) ?? 0;
+        const joinedAt = new Date(backfillBaseMs + i).toISOString();
+        backfillColor.run(PLAYER_COLORS[i % PLAYER_COLORS.length], joinedAt, m.lobbyId, m.playerId);
+        colorIndexByLobby.set(m.lobbyId, i + 1);
+      }
+
+      // --- lobby start time (stored-timestamp rule, ADR 0001) --- //
+      db.exec("ALTER TABLE lobbies ADD COLUMN started_at TEXT");
+      // A lobby already marked started (pre-this-column) has no real start
+      // time on record; updated_at is the closest available proxy (it's
+      // touched by the same UPDATE that sets started=1 — see updateStart).
+      db.exec("UPDATE lobbies SET started_at = updated_at WHERE started = 1");
+
+      // --- suburb ownership + capture-state columns (ANU-017 implements the state machine) --- //
+      db.exec(`
+        CREATE TABLE suburb_ownership (
+          lobby_id TEXT NOT NULL REFERENCES lobbies(id),
+          sal_code TEXT NOT NULL,
+          owner_player_id TEXT REFERENCES players(player_id),
+          capturing_player_id TEXT REFERENCES players(player_id),
+          capture_started_at TEXT,
+          capture_accumulated_ms INTEGER NOT NULL DEFAULT 0,
+          contesting_player_id TEXT REFERENCES players(player_id),
+          PRIMARY KEY (lobby_id, sal_code)
+        )
+      `);
+
+      // --- units + unit_types (ANU-014 fleshes out real stats/combat) --- //
+      db.exec(`
+        CREATE TABLE unit_types (
+          key TEXT PRIMARY KEY,
+          health INTEGER NOT NULL,
+          damage INTEGER NOT NULL,
+          build_cost_scrap INTEGER NOT NULL,
+          build_time_ms INTEGER NOT NULL,
+          -- "fly" ignores adjacency/corridor (drones); "ground" requires
+          -- road-adjacency to an owned suburb (robots) — see issues/ANU-014.md.
+          movement_mode TEXT NOT NULL,
+          -- Non-null for an ANU-016 skill-tree-gated variant row (e.g. an
+          -- upgraded drone/robot) a player must unlock before building.
+          requires_skill_node TEXT
+        )
+      `);
+      // Seed rows are NOT inserted here — see seedBaseUnitTypes below. A
+      // migration runs once per schema version; both ANU-014 (real
+      // drone/robot stats) and ANU-016 (gated variant rows) need to add or
+      // change unit_types rows without each needing their own colliding
+      // user_version bump, which a migration-time INSERT would force them
+      // into. An idempotent boot-time upsert does that instead.
+      db.exec(`
+        CREATE TABLE units (
+          id TEXT PRIMARY KEY,
+          lobby_id TEXT NOT NULL REFERENCES lobbies(id),
+          owner_player_id TEXT NOT NULL REFERENCES players(player_id),
+          sal_code TEXT NOT NULL,
+          unit_type_key TEXT NOT NULL REFERENCES unit_types(key),
+          health INTEGER NOT NULL,
+          spawned_at TEXT NOT NULL,
+          -- In-transit state (ANU-014's drone "mid-flight" visual): both
+          -- null when the unit isn't currently moving.
+          destination_sal_code TEXT,
+          move_started_at TEXT
+        )
+      `);
+
+      // --- factories (ANU-015 owns the production-queue logic) --- //
+      db.exec(`
+        CREATE TABLE factories (
+          id TEXT PRIMARY KEY,
+          lobby_id TEXT NOT NULL REFERENCES lobbies(id),
+          sal_code TEXT NOT NULL,
+          owner_player_id TEXT NOT NULL REFERENCES players(player_id),
+          -- Production queue, stored-timestamp style: null when idle.
+          queued_unit_type_key TEXT REFERENCES unit_types(key),
+          queue_started_at TEXT
+        )
+      `);
+
+      // --- skill_nodes (ANU-016 owns the node definitions + purchase logic) --- //
+      db.exec(`
+        CREATE TABLE skill_nodes (
+          lobby_id TEXT NOT NULL REFERENCES lobbies(id),
+          player_id TEXT NOT NULL REFERENCES players(player_id),
+          node_id TEXT NOT NULL,
+          unlocked_at TEXT NOT NULL,
+          PRIMARY KEY (lobby_id, player_id, node_id)
+        )
+      `);
+
+      db.exec("PRAGMA user_version = 5");
       db.exec("COMMIT");
     } catch (err) {
       db.exec("ROLLBACK");

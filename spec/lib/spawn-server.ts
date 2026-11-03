@@ -13,15 +13,26 @@ export interface SpawnedServer {
 export interface SpawnServerOptions {
   port: number;
   dataDir: string;
+  /**
+   * server/time.ts's GAME_TIME_SCALE — lets a spec exercise a multi-minute
+   * design duration (capture time, production time, accrual) in real
+   * seconds. Defaults to the server's own default (1) when omitted.
+   */
+  gameTimeScale?: number;
 }
 
-export function spawnServer({ port, dataDir }: SpawnServerOptions): Promise<SpawnedServer> {
+export function spawnServer({ port, dataDir, gameTimeScale }: SpawnServerOptions): Promise<SpawnedServer> {
   const baseUrl = `http://localhost:${port}`;
   const child: ChildProcess = spawn(
     process.execPath,
     ["--disable-warning=ExperimentalWarning", "server/index.ts"],
     {
-      env: { ...process.env, PORT: String(port), DATA_DIR: dataDir },
+      env: {
+        ...process.env,
+        PORT: String(port),
+        DATA_DIR: dataDir,
+        ...(gameTimeScale !== undefined ? { GAME_TIME_SCALE: String(gameTimeScale) } : {}),
+      },
       stdio: ["ignore", "pipe", "pipe"],
     },
   );

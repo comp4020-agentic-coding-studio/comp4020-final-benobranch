@@ -6,6 +6,9 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { WebSocketServer, type WebSocket } from "ws";
 import { openStore, type StoredLobby } from "./store.ts";
+import { createTerritory } from "./territory.ts";
+import { createUnits } from "./units.ts";
+import { elapsedMs } from "./time.ts";
 import { renderReadmePage } from "./readme-page.ts";
 import { serveStatic } from "./static-files.ts";
 import {
@@ -24,6 +27,8 @@ const PUBLIC_DIR = process.env.PUBLIC_DIR ?? "server/public";
 const MAP_DATA_DIR = process.env.MAP_DATA_DIR ?? "scripts/map/data";
 
 const store = openStore(`${DATA_DIR}/game.db`);
+const territory = createTerritory(store.db);
+const units = createUnits(store.db);
 
 interface ConnMeta {
   playerId: string;
@@ -64,7 +69,10 @@ function buildLobbyState(lobby: StoredLobby): LobbyState {
     name: lobby.name,
     capacity: lobby.capacity,
     started: lobby.started,
-    members: members.map((m) => ({ playerId: m.playerId, name: m.name, online: isOnline(m.playerId) })),
+    startedAt: lobby.startedAt,
+    gameElapsedMs: elapsedMs(lobby.startedAt),
+    members: members.map((m) => ({ playerId: m.playerId, name: m.name, online: isOnline(m.playerId), color: m.color })),
+    ownership: territory.getOwnership(lobby.lobbyId),
   };
 }
 
@@ -104,6 +112,11 @@ function broadcastLobbyList(): void {
   for (const [socket, meta] of sockets) {
     if (meta.watchingLobbies) send(socket, message);
   }
+}
+
+function broadcastOccupancy(lobbyId: string): void {
+  const message: ServerMessage = { type: "occupancy", lobbyId, units: units.getOccupancy(lobbyId) };
+  for (const socket of socketsInLobby(lobbyId)) send(socket, message);
 }
 
 // Moves every live socket belonging to `playerId` from `fromLobbyId` to
@@ -195,6 +208,10 @@ wss.on("connection", (socket) => {
       sockets.set(socket, { playerId, lobbyId, registered: true, watchingLobbies: false });
 
       send(socket, { type: "welcome", playerId, token, lobby: lobby ? buildLobbyState(lobby) : null });
+      // A reconnecting client needs current occupancy too, not just lobby
+      // state — occupancy otherwise only arrives on the next place/move
+      // broadcast, which a client that was offline when it happened would miss.
+      if (lobbyId) send(socket, { type: "occupancy", lobbyId, units: units.getOccupancy(lobbyId) });
       if (lobbyId) broadcastLobbyState(lobbyId); // this player's online status just changed
       return;
     }
@@ -230,9 +247,35 @@ wss.on("connection", (socket) => {
       if (!meta.lobbyId) return;
       const lobby = store.startLobby(meta.lobbyId);
       if (lobby) {
+        // Spawn suburbs auto-owned at kickoff (issues/ANU-013.md) — in join
+        // order, against this lobby's own capacity's spawn table.
+        const memberPlayerIds = store.getLobbyMembers(lobby.lobbyId).map((m) => m.playerId);
+        territory.assignSpawnOwnership(lobby.lobbyId, memberPlayerIds);
         broadcastLobbyState(meta.lobbyId);
         broadcastLobbyList(); // the browse list also shows started/not-started
       }
+      return;
+    }
+
+    if (message.type === "placeUnit") {
+      if (!meta.lobbyId || !store.getLobby(meta.lobbyId)?.started) return; // occupancy only makes sense once a game is running
+      const result = units.placeUnit(meta.lobbyId, meta.playerId, message.sal_code, message.unitTypeKey);
+      if (!result.ok) {
+        send(socket, { type: "error", message: `placeUnit: ${result.reason}` });
+        return;
+      }
+      broadcastOccupancy(meta.lobbyId);
+      return;
+    }
+
+    if (message.type === "moveUnit") {
+      if (!meta.lobbyId || !store.getLobby(meta.lobbyId)?.started) return;
+      const result = units.moveUnit(meta.lobbyId, meta.playerId, message.unitId, message.sal_code);
+      if (!result.ok) {
+        send(socket, { type: "error", message: `moveUnit: ${result.reason}` });
+        return;
+      }
+      broadcastOccupancy(meta.lobbyId);
       return;
     }
 

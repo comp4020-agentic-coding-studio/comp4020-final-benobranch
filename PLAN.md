@@ -78,23 +78,47 @@ specifically wants:
   encryption to avoid other players reading your traffic" framing) —
   disconnected use is a fallback, not a dead end, so losing your corridor is
   bad but not instantly fatal.
-- TFLOPS earned fund the **skill tree**: more compute = faster research, not
-  a different currency. This is the single resource that ties territory,
-  economy and tech progression together — worth protecting as the one
-  through-line when we get into implementation detail.
+- TFLOPS earned fund the **skill tree**: more compute = faster research. See
+  "Two resources: TFLOPS and scrap" below for why this is no longer the
+  single resource tying territory, economy and tech together — that framing
+  was revised once the factory/unit-destruction request below named a second
+  one explicitly.
+
+### Two resources: TFLOPS and scrap (revised — see [[ANU-013]])
+
+This section originally said TFLOPS was "the single resource that ties
+territory, economy and tech progression together... not a different
+currency." That's revised: the user's own request for factories and a skill
+tree names a second resource explicitly — "resources gained by destroying
+enemy troups" funding more factories, and a skill-tree perk for "more scrap
+gained by killing enemy troops." Both phrases only make sense if there's a
+combat currency distinct from the compute currency. So:
+
+- **TFLOPS** (from data centers, per "Data centers" above) funds the
+  **skill tree** only — tech progression, not production.
+- **Scrap** (earned by destroying enemy units) funds **factory/unit
+  production** — building more factories and more troops.
+
+This keeps each resource tied to a distinct loop (hold territory → earn
+TFLOPS → unlock tech; win fights → earn scrap → build more army) rather than
+one number doing both jobs.
 
 ### Bases, drones, skill tree
-- Each player has one **home base** (their factory). All players start
-  identical: same starting drone roster, same base.
+- Each player has one **home base** (their factory, placed at their spawn
+  suburb — see "Players & spawn balance"). All players start identical: same
+  starting drone roster, same base. Players can build additional factories
+  (see [[ANU-015]] for where).
 - The factory produces autonomous units (drones/bots) used to attack
-  neighbouring suburbs and to defend owned ones.
-- The skill tree (funded by TFLOPS, faster with more compute) unlocks:
+  neighbouring suburbs and to defend owned ones, paid for in **scrap**.
+- The skill tree (funded by **TFLOPS**, faster with more compute) unlocks:
   - new unit types,
   - faster/cheaper unit production,
-  - misc perks (scouting, defense bonuses, path efficiency, etc. — TBD).
+  - misc perks (scouting, defense bonuses, path efficiency, more scrap per
+    kill, faster zone capture, etc. — see [[ANU-016]]).
 - Attack = send units from an owned suburb into an adjacent one (adjacency
-  as defined above); resolution rule still TBD (see Open decisions — this is
-  shared with the original plan's "combat rule" question).
+  as defined above; drones ignore this restriction — see [[ANU-014]]);
+  resolution rule still TBD (see Open decisions — this is shared with the
+  original plan's "combat rule" question).
 
 ## Art direction
 
