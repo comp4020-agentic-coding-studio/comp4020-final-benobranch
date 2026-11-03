@@ -103,6 +103,33 @@ export interface ClientAttackSuburb {
   sal_code: string;
 }
 
+export interface ClientBuildFactory {
+  /**
+   * Builds an additional factory (ANU-015) in a suburb the sender already
+   * owns — the first factory per player is placed automatically at kickoff
+   * (server/factories.ts's spawnFactories); this is for every one after
+   * that. Costs a flat scrap amount (server/factories.ts's
+   * FACTORY_BUILD_COST_SCRAP), no adjacency-to-an-existing-factory
+   * restriction (confirmed with the user via AskUserQuestion — see
+   * issues/ANU-015.md's Resolution).
+   */
+  type: "buildFactory";
+  sal_code: string;
+}
+
+export interface ClientQueueUnit {
+  /**
+   * Queues a unit build at a factory the sender owns (ANU-015). One build
+   * at a time per factory — rejected with "busy" if the factory already has
+   * something queued. Costs scrap (unit_types.build_cost_scrap, scaled by
+   * the factoryBuildCostMultiplier perk hook) deducted synchronously
+   * against the sender's balance.
+   */
+  type: "queueUnit";
+  factoryId: string;
+  unitTypeKey: string;
+}
+
 export type ClientMessage =
   | ClientHello
   | ClientCreateLobby
@@ -112,7 +139,9 @@ export type ClientMessage =
   | ClientUnwatchLobbies
   | ClientPlaceUnit
   | ClientMoveUnit
-  | ClientAttackSuburb;
+  | ClientAttackSuburb
+  | ClientBuildFactory
+  | ClientQueueUnit;
 
 export interface PlayerPresence {
   playerId: string;
@@ -157,6 +186,21 @@ export interface ServerOccupancy {
   type: "occupancy";
   lobbyId: string;
   units: OccupantUnit[];
+}
+
+export interface FactoryState {
+  id: string;
+  sal_code: string;
+  ownerPlayerId: string;
+  queuedUnitTypeKey: string | null;
+  /** 0 (just queued) to 1 (about to complete); null while idle — see server/factories.ts. */
+  queueProgressFraction: number | null;
+}
+
+export interface ServerFactories {
+  type: "factories";
+  lobbyId: string;
+  factories: FactoryState[];
 }
 
 export interface LobbySummary {
@@ -213,7 +257,8 @@ export type ServerMessage =
   | ServerLobbyList
   | ServerNameRequired
   | ServerError
-  | ServerOccupancy;
+  | ServerOccupancy
+  | ServerFactories;
 
 const MAX_NAME_LENGTH = 40;
 const MAX_TOKEN_LENGTH = 100;
@@ -354,6 +399,25 @@ export function parseClientMessage(raw: string): ClientMessage {
       throw new Error("'attackSuburb' requires a non-empty 'sal_code'");
     }
     return { type: "attackSuburb", unitId, sal_code };
+  }
+
+  if (type === "buildFactory") {
+    const { sal_code } = data as Partial<ClientBuildFactory>;
+    if (!isNonEmptyString(sal_code, MAX_SAL_CODE_LENGTH)) {
+      throw new Error("'buildFactory' requires a non-empty 'sal_code'");
+    }
+    return { type: "buildFactory", sal_code };
+  }
+
+  if (type === "queueUnit") {
+    const { factoryId, unitTypeKey } = data as Partial<ClientQueueUnit>;
+    if (!isNonEmptyString(factoryId, MAX_UNIT_ID_LENGTH)) {
+      throw new Error("'queueUnit' requires a non-empty 'factoryId'");
+    }
+    if (!isNonEmptyString(unitTypeKey, MAX_UNIT_TYPE_KEY_LENGTH)) {
+      throw new Error("'queueUnit' requires a non-empty 'unitTypeKey'");
+    }
+    return { type: "queueUnit", factoryId, unitTypeKey };
   }
 
   throw new Error(`unknown message type: ${String(type)}`);

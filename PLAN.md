@@ -107,7 +107,11 @@ one number doing both jobs.
 - Each player has one **home base** (their factory, placed at their spawn
   suburb — see "Players & spawn balance"). All players start identical: same
   starting drone roster, same base. Players can build additional factories
-  (see [[ANU-015]] for where).
+  in **any suburb they own** — no adjacency-to-an-existing-factory
+  restriction (confirmed with the user — see [[ANU-015]]'s Resolution) —
+  for a flat scrap cost. Capturing a suburb with an enemy factory in it
+  **transfers** that factory to the capturing player (including any
+  in-progress build) rather than destroying it.
 - The factory produces autonomous units (drones/bots) used to attack
   neighbouring suburbs and to defend owned ones, paid for in **scrap**.
 - The skill tree (funded by **TFLOPS**, faster with more compute) unlocks:
