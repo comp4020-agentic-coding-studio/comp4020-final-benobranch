@@ -191,6 +191,24 @@ describe("player colors", () => {
       }
     }
   });
+
+  it("the first 6 colors (what a 4-6 player lobby actually uses) are pairwise distinct in hue, not just overall RGB distance", () => {
+    // A small lobby only ever reaches the front of PLAYER_COLORS — if those
+    // were grouped by hue-pair (e.g. two greens in slots 1 and 4), most
+    // real games would never see the palette's actual hue spread. This
+    // checks the ordering property directly, not just "12 colors exist
+    // somewhere that are spread out."
+    const firstSix = PLAYER_COLORS.slice(0, 6);
+    const MIN_HUE_SPREAD = 30;
+    for (let i = 0; i < firstSix.length; i++) {
+      for (let j = i + 1; j < firstSix.length; j++) {
+        expect(
+          hueDistance(hue(firstSix[i]), hue(firstSix[j])),
+          `the first 6 player colors should be spread across hue — ${firstSix[i]} and ${firstSix[j]} are too close`,
+        ).toBeGreaterThanOrEqual(MIN_HUE_SPREAD);
+      }
+    }
+  });
 });
 
 describe("spawn-ownership at kickoff", () => {

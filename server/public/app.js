@@ -204,8 +204,13 @@ function renderLobbyScreen(/** @type {LobbyState} */ lobby) {
     // keyed by the real player count at start time, not the lobby's
     // configured capacity — a 12-capacity lobby started with 4 players owns
     // the 4-player ring, not the first 4 entries of the 12-player one.
-    // Membership is frozen once started, so lobby.members.length is stable.
-    mountMap(lobby.lobbyId, lobby.members.length);
+    // Clamped to the spawn table's own 4-12 range: a lobby can start with
+    // exactly the 4-player minimum (there's no bot-fill yet — see
+    // issues/ANU-009.md), and members.length can shrink further if someone
+    // leaves this lobby for another after it started (server/store.ts's
+    // lobby-switch path doesn't block that), so this can't assume
+    // members.length is always a valid spawn-table key on its own.
+    mountMap(lobby.lobbyId, Math.max(4, Math.min(12, lobby.members.length)));
   } else {
     unmountMap();
   }

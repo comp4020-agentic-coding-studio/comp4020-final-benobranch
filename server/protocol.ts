@@ -200,29 +200,32 @@ export const MAX_CAPACITY = 12;
 // at join and locked for the lobby's lifetime — see ADR 0002's precedent
 // for locking callsign the same way. Chosen to stay visually distinct from
 // map.js's existing data-center tier marker colors (mega #ff4fd8 magenta,
-// major #ffb23e amber, standard #6fa8ff blue) on BOTH axes a reviewer could
-// reasonably check:
-//   - hue: every color's hue is at least 28 degrees of circular distance
-//     from all three marker hues (36/216/313 degrees) — six base hues, two
-//     lightness levels each, chosen from the ~210 degrees of the wheel that
-//     clears a 25-degree margin around every marker hue.
-//   - rendered RGB: every color is at least 80 Euclidean RGB distance
-//     (0-441 scale) from all three markers, and all 12 are at least 75
-//     apart from each other.
-// Ordered furthest-from-any-marker first, since a small lobby only ever
-// assigns the first few entries. Both bounds above are exactly what
-// spec/territory.test.ts asserts (importing this array directly, not
-// re-parsing hex literals out of this file).
+// major #ffb23e amber, standard #6fa8ff blue) on both axes
+// spec/territory.test.ts asserts directly against this exported array
+// (not by re-parsing hex literals out of this file):
+//   - hue: every color is at least 25 degrees of circular hue distance from
+//     all three marker hues (36/216/313 degrees) — the guarantee the spec
+//     checks; every entry here actually clears 28+.
+//   - rendered RGB: every color is at least 60 Euclidean RGB distance
+//     (0-441 scale) from all three markers, and all 12 are at least 60
+//     apart from each other — every entry here actually clears 80/78.
+// Six base hues (each >=31 degrees apart from the other five — the
+// smallest lobby's palette is maximally spread, not just "distinct from
+// markers"), each at two lightness levels, ordered base hues first then
+// their lighter variants — NOT grouped by hue pair, since a 4-6 player
+// lobby (using only the first 4-6 entries) would otherwise get two
+// near-identical-hue colors (e.g. two greens) before ever reaching a
+// distinct sixth hue.
 export const PLAYER_COLORS: readonly string[] = [
-  "#30b319", // green, hue 111 (75 deg from nearest marker)
-  "#2419b3", // indigo, hue 244 (28 deg from standard-blue 216)
-  "#b31942", // crimson, hue 344 (31 deg from mega-magenta 313)
+  "#30b319", // green, hue 111
+  "#2419b3", // indigo, hue 244
+  "#b31942", // crimson, hue 344
+  "#7519b3", // violet, hue 276
+  "#19b399", // teal, hue 170
+  "#91b319", // olive, hue 73
   "#6be755", // light green, hue 111
-  "#7519b3", // violet, hue 276 (37 deg from standard-blue)
-  "#19b399", // teal, hue 170 (46 deg from standard-blue)
-  "#91b319", // olive, hue 73 (37 deg from major-amber 36)
-  "#e7557c", // rose, hue 344
   "#5f55e7", // periwinkle, hue 244
+  "#e7557c", // rose, hue 344
   "#ad55e7", // light violet, hue 276
   "#55e7cf", // light teal, hue 170
   "#c7e755", // light olive, hue 73
