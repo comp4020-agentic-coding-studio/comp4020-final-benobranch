@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 import { PLAYER_COLORS } from "./protocol.ts";
 import { createPerkHook } from "./perks.ts";
 import { seedBaseUnitTypes } from "./units.ts";
+import { seedSkillGatedUnitTypes } from "./skill-tree.ts";
 
 export const DEFAULT_LOBBY_ID = "default";
 
@@ -97,6 +98,7 @@ export function openStore(dbPath: string): Store {
 
   migrate(db);
   seedBaseUnitTypes(db);
+  seedSkillGatedUnitTypes(db);
 
   const insertPlayer = db.prepare(
     "INSERT INTO players (token, player_id, created_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",

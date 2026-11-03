@@ -44,3 +44,18 @@ it("a robot never reports 'in-transit' even if destinationSalCode were set — r
   );
   expect(robot.state).toBe("grounded");
 });
+
+it("ANU-016's skill-tree-gated 'mk2' variants render with their base archetype's icon, not a new one", () => {
+  const advancedDrone = unitVisual({ ...BASE_UNIT, unitTypeKey: "drone-mk2", health: 5 }, 5);
+  const advancedRobot = unitVisual({ ...BASE_UNIT, unitTypeKey: "robot-mk2", health: 10 }, 10);
+  expect(advancedDrone.icon).toBe("drone");
+  expect(advancedRobot.icon).toBe("robot");
+});
+
+it("an advanced drone (drone-mk2) mid-flight still reports 'in-transit' like a base drone", () => {
+  const inTransit = unitVisual(
+    { ...BASE_UNIT, unitTypeKey: "drone-mk2", destinationSalCode: "80002", moveStartedAt: "2026-11-03T00:00:00.000Z" },
+    5,
+  );
+  expect(inTransit.state).toBe("in-transit");
+});
