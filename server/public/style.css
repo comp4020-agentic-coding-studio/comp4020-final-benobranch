@@ -1,8 +1,19 @@
 /* Dark, high-contrast HUD chrome over a surveilled-infrastructure tone
    (PLAN.md "Art direction"): a near-black base, a single cyan accent for
    ownership/state, sharp system sans-serif. No cyberpunk-pastiche clutter —
-   the tone comes from the premise, not maximalist visual noise. System
-   fonts only, so a slow connection never blocks rendering on a CDN font. */
+   the tone comes from the premise, not maximalist visual noise. The UI
+   font is "Determination" (fonts/determination.ttf, CC BY 3.0 — see
+   fonts/license.txt), self-hosted rather than CDN-loaded, with
+   font-display: swap so text renders in the system fallback until it
+   arrives instead of blocking. */
+@font-face {
+  font-family: "Determination";
+  src: url("fonts/determination.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --bg: #0a0d10;
   --panel: #12171b;
@@ -12,7 +23,7 @@
   --accent: #38e0c8;
   --accent-dim: #1f7a6c;
   --danger: #e05b4f;
-  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font: "Determination", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
 * {
