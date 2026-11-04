@@ -12,6 +12,7 @@ import WebSocket from "ws";
 import { spawnServer, type SpawnedServer } from "./lib/spawn-server.ts";
 import { pathVertices, minVertexDistance } from "./lib/svg-path.ts";
 import { PLAYER_COLORS } from "../server/protocol.ts";
+import { DATA_CENTER_TIER_COLORS } from "../server/public/data-center-visual.js";
 
 const baseUrl = inject("baseUrl");
 
@@ -142,45 +143,13 @@ describe("player colors", () => {
     await closeAndWait(resumed);
   });
 
-  it("disjoint from map.js's data-center tier marker colors by hue AND rendered RGB distance, not just inequality", () => {
-    const mapCss = readFileSync("server/public/map.css", "utf8");
-    const tierColors: string[] = [];
-    for (const m of mapCss.matchAll(/\.dc-marker--\w+\s*\{\s*fill:\s*(#[0-9a-fA-F]{6});/g)) {
-      tierColors.push(m[1]);
-    }
-    expect(tierColors.length, "expected to find the three dc-marker tier fill colors in map.css").toBe(3);
-
+  it("every player color is pairwise distinct from every other player color", () => {
     expect(PLAYER_COLORS.length).toBe(12);
     expect(new Set(PLAYER_COLORS).size, "every palette entry must be distinct").toBe(12);
 
-    // Hue: a tier marker and a player color sharing (near-)the-same hue is
-    // exactly the failure mode "never mistaken for a data-center marker"
-    // guards against — a player's territory fill sitting under a marker of
-    // a visually similar hue. 25 degrees is the margin the palette was
-    // picked against (every entry actually clears 28+).
-    const MIN_HUE_GAP = 25;
-    for (const pc of PLAYER_COLORS) {
-      for (const tc of tierColors) {
-        expect(
-          hueDistance(hue(pc), hue(tc)),
-          `player color ${pc} (hue ${hue(pc).toFixed(0)}) is too close in hue to data-center marker ${tc} (hue ${hue(tc).toFixed(0)})`,
-        ).toBeGreaterThanOrEqual(MIN_HUE_GAP);
-      }
-    }
-
-    // Rendered RGB distance: a secondary, independent check — lightness/
-    // saturation differences can keep two same-ish hues visually distinct,
-    // but this palette doesn't rely on that; it clears both bounds.
-    const MIN_MARKER_DISTANCE = 60; // below the smallest margin verified when the palette was picked (~80.5)
-    for (const pc of PLAYER_COLORS) {
-      for (const tc of tierColors) {
-        expect(
-          rgbDistance(pc, tc),
-          `player color ${pc} is too close to data-center marker color ${tc}`,
-        ).toBeGreaterThanOrEqual(MIN_MARKER_DISTANCE);
-      }
-    }
-
+    // This bound is about players confusing each other's territory, not
+    // about data-center markers (see the test below for that) — it holds
+    // regardless of what the markers look like.
     const MIN_PAIRWISE_DISTANCE = 60; // below the smallest pairwise margin verified when the palette was picked (~78.0)
     for (let i = 0; i < PLAYER_COLORS.length; i++) {
       for (let j = i + 1; j < PLAYER_COLORS.length; j++) {
@@ -188,6 +157,33 @@ describe("player colors", () => {
           rgbDistance(PLAYER_COLORS[i], PLAYER_COLORS[j]),
           `player colors ${PLAYER_COLORS[i]} and ${PLAYER_COLORS[j]} are too close to each other`,
         ).toBeGreaterThanOrEqual(MIN_PAIRWISE_DISTANCE);
+      }
+    }
+  });
+
+  it("no player color exactly duplicates a data-center tier marker color", () => {
+    // ANU-021 replaced the solid-color `.dc-marker--*` circles with tier-
+    // recolored icons (server/public/data-center-visual.js's
+    // DATA_CENTER_TIER_COLORS) drawn from a fixed 14-color asset pack — the
+    // pack's standard/mega tints (teal, crimson) land close in hue to this
+    // lobby's own teal/crimson player colors, so the old 25-degree-hue /
+    // 60-RGB-distance guarantee this test used to enforce no longer holds
+    // and isn't achievable without picking different icon colors (user's
+    // explicit call: loosen the test rather than that). Markers are now
+    // also shape-differentiated (a distinct glyph per tier, not just a
+    // colored dot), which is most of what carried the original "never
+    // mistaken for a marker" intent — what still matters, and is still
+    // worth guarding, is that no player color is literally identical to a
+    // marker's.
+    const tierColors = Object.values(DATA_CENTER_TIER_COLORS);
+    expect(tierColors).toHaveLength(3);
+    expect(new Set(tierColors).size, "every tier color must be distinct").toBe(3);
+
+    for (const pc of PLAYER_COLORS) {
+      for (const tc of tierColors) {
+        expect(pc.toLowerCase(), `player color ${pc} exactly duplicates marker color ${tc}`).not.toBe(
+          tc.toLowerCase(),
+        );
       }
     }
   });

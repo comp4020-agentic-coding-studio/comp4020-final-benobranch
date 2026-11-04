@@ -344,17 +344,16 @@ export const MAX_CAPACITY = 12;
 
 // One color per lobby slot (MAX_CAPACITY of them), assigned in list order
 // at join and locked for the lobby's lifetime — see ADR 0002's precedent
-// for locking callsign the same way. Chosen to stay visually distinct from
-// map.js's existing data-center tier marker colors (mega #ff4fd8 magenta,
-// major #ffb23e amber, standard #6fa8ff blue) on both axes
-// spec/territory.test.ts asserts directly against this exported array
-// (not by re-parsing hex literals out of this file):
-//   - hue: every color is at least 25 degrees of circular hue distance from
-//     all three marker hues (36/216/313 degrees) — the guarantee the spec
-//     checks; every entry here actually clears 28+.
-//   - rendered RGB: every color is at least 60 Euclidean RGB distance
-//     (0-441 scale) from all three markers, and all 12 are at least 60
-//     apart from each other — every entry here actually clears 80/78.
+// for locking callsign the same way. Originally chosen to stay visually
+// distinct from map.js's then-solid-color data-center tier markers on both
+// axes (hue and rendered RGB distance) — spec/territory.test.ts asserted
+// directly against this exported array. ANU-021 swapped those circles for
+// tier-colored icons (server/public/data-center-visual.js's
+// DATA_CENTER_TIER_COLORS); the
+// icons' teal/crimson tints land close to this palette's own teal/crimson
+// entries, so that hue/RGB guarantee no longer holds for every pair — see
+// spec/territory.test.ts's own note on what it checks now instead
+// (distinguishable by icon shape, not purely by color).
 // Six base hues (each >=31 degrees apart from the other five — the
 // smallest lobby's palette is maximally spread, not just "distinct from
 // markers"), each at two lightness levels, ordered base hues first then
