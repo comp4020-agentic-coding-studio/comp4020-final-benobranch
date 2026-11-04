@@ -24,3 +24,15 @@ export function elapsedMs(startedAt: string | null | undefined, scale: number = 
 export function nowIso(): string {
   return new Date().toISOString();
 }
+
+/**
+ * The inverse of elapsedMs: a timestamp such that elapsedMs(result, scale)
+ * read back immediately equals `accumulatedMs` — used to resume a paused
+ * stored-timestamp duration (ANU-017's capture pause/resume) without losing
+ * progress: "a new capture_started_at set to 'now minus accumulated,' not a
+ * progress reset" (issues/ANU-017.md).
+ */
+export function backdatedStart(accumulatedMs: number, scale: number = GAME_TIME_SCALE): string {
+  const realOffsetMs = scale > 0 ? accumulatedMs / scale : 0;
+  return new Date(Date.now() - realOffsetMs).toISOString();
+}
