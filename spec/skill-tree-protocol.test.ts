@@ -1,12 +1,18 @@
-// Checks ANU-016's `purchaseNode` message end-to-end over the real
-// WebSocket protocol — the store-level logic is covered directly against
-// server/skill-tree.ts in spec/skill-tree.test.ts, but nothing exercises the
-// parser branch, the index.ts handler, or the resulting broadcast itself.
-// ANU-013's Resolution records a process-crashing bug that slipped through
-// exactly this kind of gap (a store-level-only test suite that never sent a
-// real message over the wire) — this file is what closes that gap for this
-// issue's own new message type. Same connect/send/waitFor pattern as
-// spec/occupancy.test.ts.
+// Checks ANU-016's skill tree (redesigned by ANU-019 into time-gated
+// research) end-to-end over the real WebSocket protocol — the store-level
+// logic is covered directly against server/skill-tree.ts in
+// spec/skill-tree.test.ts, but nothing exercises the parser branch, the
+// index.ts handler, or the resulting broadcast itself. ANU-013's Resolution
+// records a process-crashing bug that slipped through exactly this kind of
+// gap (a store-level-only test suite that never sent a real message over
+// the wire) — this file is what closes that gap for this issue's own
+// message type. Same connect/send/waitFor pattern as spec/occupancy.test.ts.
+//
+// Unlike ANU-016's original spend-based purchaseNode, starting research
+// never requires funding a balance first — there's nothing to fund (TFLOPS
+// is a live speed multiplier, not spent — server/tflops.ts) — so this file
+// can now drive a real success-path startResearch over the wire, which
+// ANU-016's own Resolution noted was impossible under the old design.
 import { expect, inject, it } from "vitest";
 import WebSocket from "ws";
 
@@ -72,28 +78,42 @@ async function createStartedLobby(name: string): Promise<{ creator: Client; lobb
 // that prefix + suffix never exceeds that (a too-long name throws inside
 // parseClientMessage, which closes the socket with no 'error' message sent,
 // hanging every subsequent waitFor rather than failing with a clear cause).
-it("rejects purchaseNode with insufficient TFLOPS, over the wire, without closing the connection", async () => {
-  const { creator } = await createStartedLobby(`st-insufficient-${Date.now()}`);
+it("starting research on a root node succeeds over the wire and broadcasts a skillTree message with researching set", async () => {
+  const { creator } = await createStartedLobby(`st-start-${Date.now()}`);
 
-  send(creator, { type: "purchaseNode", nodeId: "better-fabs" });
-  const error = await waitFor(creator, (m) => m.type === "error");
-  expect((error.message as string).toLowerCase()).toContain("insufficient-tflops");
-  expect(creator.ws.readyState, "the connection must survive a rejected purchase").toBe(creator.ws.OPEN);
+  send(creator, { type: "startResearch", nodeId: "better-fabs" });
+  const skillTreeMsg = await waitFor(creator, (m) => m.type === "skillTree" && (m.researching as { nodeId: string } | null)?.nodeId === "better-fabs");
+  expect(skillTreeMsg.unlockedNodeIds).toEqual([]); // not unlocked yet — research just started
+  expect((skillTreeMsg.researching as { progressFraction: number }).progressFraction).toBeGreaterThanOrEqual(0);
 
   await closeAndWait(creator);
 });
 
-it("rejects purchaseNode for an unknown node id, over the wire", async () => {
+it("rejects startResearch for an unknown node id, over the wire, without closing the connection", async () => {
   const { creator } = await createStartedLobby(`st-unknown-${Date.now()}`);
 
-  send(creator, { type: "purchaseNode", nodeId: "not-a-real-node" });
+  send(creator, { type: "startResearch", nodeId: "not-a-real-node" });
   const error = await waitFor(creator, (m) => m.type === "error");
   expect((error.message as string).toLowerCase()).toContain("unknown-node");
+  expect(creator.ws.readyState, "the connection must survive a rejected startResearch").toBe(creator.ws.OPEN);
 
   await closeAndWait(creator);
 });
 
-it("sends a fresh skillTree message (empty unlocked set, tflops 0) on reconnect ('hello' with a resumed token) to a started lobby", async () => {
+it("rejects a second startResearch while one is already in progress, over the wire", async () => {
+  const { creator } = await createStartedLobby(`st-busy-${Date.now()}`);
+
+  send(creator, { type: "startResearch", nodeId: "better-fabs" });
+  await waitFor(creator, (m) => m.type === "skillTree" && (m.researching as { nodeId: string } | null)?.nodeId === "better-fabs");
+
+  send(creator, { type: "startResearch", nodeId: "lean-production" });
+  const error = await waitFor(creator, (m) => m.type === "error");
+  expect((error.message as string).toLowerCase()).toContain("already-researching");
+
+  await closeAndWait(creator);
+});
+
+it("sends a fresh skillTree message (empty unlocked set, nothing researching, tflops 0) on reconnect ('hello' with a resumed token) to a started lobby", async () => {
   // The skillTree send on 'hello' only fires for a RESUMED session (an
   // existing lobbyId already on record for this token) — same reasoning as
   // occupancy/factories' own "send current state on reconnect" sends in
@@ -107,17 +127,18 @@ it("sends a fresh skillTree message (empty unlocked set, tflops 0) on reconnect 
   const reconnected = await connect(token);
   const skillTreeMsg = await waitFor(reconnected, (m) => m.type === "skillTree");
   expect(skillTreeMsg.unlockedNodeIds).toEqual([]);
-  expect(skillTreeMsg.tflops).toBe(0);
+  expect(skillTreeMsg.researching).toBeNull();
+  expect(skillTreeMsg.tflops).toBe(0); // no data center held
 
   await closeAndWait(reconnected);
 });
 
-it("a closing-socket message with a malformed purchaseNode payload is rejected at parse time, not silently ignored", async () => {
+it("a closing-socket message with a malformed startResearch payload is rejected at parse time, not silently ignored", async () => {
   const creator = await connect();
   const closed = new Promise<{ code: number; reason: string }>((resolve) => {
     creator.ws.once("close", (code, reason) => resolve({ code, reason: reason.toString() }));
   });
-  creator.ws.send(JSON.stringify({ type: "purchaseNode" })); // missing required 'nodeId'
+  creator.ws.send(JSON.stringify({ type: "startResearch" })); // missing required 'nodeId'
   const { code } = await closed;
   expect(code).toBe(1008); // same policy-violation close code every other malformed message uses
 });

@@ -120,15 +120,20 @@ export interface ClientBuildFactory {
   sal_code: string;
 }
 
-export interface ClientPurchaseNode {
+export interface ClientStartResearch {
   /**
-   * Unlocks a skill-tree node (ANU-016), costing TFLOPS (not scrap — the
-   * skill tree is funded by the compute resource; see PLAN.md's "Two
-   * resources" section). Rejected if the node's prerequisite (if any) isn't
-   * already unlocked, if it's already unlocked, or if the sender's TFLOPS
-   * balance is insufficient — see server/skill-tree.ts.
+   * Starts researching a skill-tree node (ANU-016, time-gated by ANU-019):
+   * the node unlocks on its own once its base research time (divided by the
+   * sender's current live-TFLOPS speed multiplier — held data centers speed
+   * this up, they're never spent on it; see PLAN.md's "Data centers"
+   * section) has elapsed, settled lazily like every other stored-timestamp
+   * duration (server/time.ts's elapsedMs). Rejected if the node's
+   * prerequisite (if any) isn't already unlocked, if it's already unlocked,
+   * or if the sender already has a different (or the same) node in
+   * progress — one active research slot per player, not a queue — see
+   * server/skill-tree.ts.
    */
-  type: "purchaseNode";
+  type: "startResearch";
   nodeId: string;
 }
 
@@ -143,7 +148,7 @@ export type ClientMessage =
   | ClientMoveUnit
   | ClientAttackSuburb
   | ClientBuildFactory
-  | ClientPurchaseNode;
+  | ClientStartResearch;
 
 export interface PlayerPresence {
   playerId: string;
@@ -249,9 +254,11 @@ export interface ServerUnitCatalog {
 }
 
 /**
- * A player's own scrap/TFLOPS balance (ANU-020) — sent only to the owning
- * player's socket(s), never broadcast to the lobby like LobbyState is,
- * since a balance is private to that player.
+ * A player's own scrap balance and current live TFLOPS (ANU-020; TFLOPS
+ * reworked by ANU-019 from a stored balance to a live sum of currently-held
+ * data centers — server/tflops.ts) — sent only to the owning player's
+ * socket(s), never broadcast to the lobby like LobbyState is, since both are
+ * private to that player.
  */
 export interface ServerEconomy {
   type: "economy";
@@ -285,19 +292,20 @@ export interface ServerCaptures {
 
 export interface ServerSkillTree {
   /**
-   * The purchasing player's current unlocked-node set, resulting perk
-   * multipliers, and remaining TFLOPS balance (ANU-016) — the balance is
-   * included so the client-side skillTreeVisual pure function (which needs
-   * both the unlocked set and the current TFLOPS balance to compute which
-   * nodes are "purchasable") can be fed directly from this one message.
-   * Broadcast only to the purchaser — other players' skill trees are
-   * independent (server/skill-tree.ts is per-player, not shared within a
-   * lobby), unlike ServerOccupancy/ServerFactories which are lobby-wide
-   * since ownership/factories are visible to everyone.
+   * The researching player's current unlocked-node set, in-progress
+   * research (if any), resulting perk multipliers, and current live TFLOPS
+   * (ANU-016, time-gated by ANU-019) — TFLOPS is included so the
+   * client-side skillTreeVisual pure function and any future progress UI
+   * can be fed directly from this one message. Broadcast only to the
+   * researching player — other players' skill trees are independent
+   * (server/skill-tree.ts is per-player, not shared within a lobby), unlike
+   * ServerOccupancy/ServerFactories which are lobby-wide since
+   * ownership/factories are visible to everyone.
    */
   type: "skillTree";
   playerId: string;
   unlockedNodeIds: string[];
+  researching: { nodeId: string; startedAt: string; progressFraction: number } | null;
   multipliers: import("./perks.ts").PerkMultipliers;
   tflops: number;
 }
@@ -512,12 +520,12 @@ export function parseClientMessage(raw: string): ClientMessage {
     return { type: "buildFactory", sal_code };
   }
 
-  if (type === "purchaseNode") {
-    const { nodeId } = data as Partial<ClientPurchaseNode>;
+  if (type === "startResearch") {
+    const { nodeId } = data as Partial<ClientStartResearch>;
     if (!isNonEmptyString(nodeId, MAX_NODE_ID_LENGTH)) {
-      throw new Error("'purchaseNode' requires a non-empty 'nodeId'");
+      throw new Error("'startResearch' requires a non-empty 'nodeId'");
     }
-    return { type: "purchaseNode", nodeId };
+    return { type: "startResearch", nodeId };
   }
 
   throw new Error(`unknown message type: ${String(type)}`);

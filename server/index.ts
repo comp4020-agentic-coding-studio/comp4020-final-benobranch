@@ -10,6 +10,7 @@ import { createTerritory } from "./territory.ts";
 import { createUnits, listUnitTypes } from "./units.ts";
 import { createFactories } from "./factories.ts";
 import { createSkillTree } from "./skill-tree.ts";
+import { createTflopsSource } from "./tflops.ts";
 import { elapsedMs } from "./time.ts";
 import { renderReadmePage } from "./readme-page.ts";
 import { serveStatic } from "./static-files.ts";
@@ -33,7 +34,8 @@ const store = openStore(`${DATA_DIR}/game.db`);
 const territory = createTerritory(store.db);
 const units = createUnits(store.db);
 const factories = createFactories(store.db, units);
-const skillTree = createSkillTree(store.db);
+const tflopsSource = createTflopsSource(territory);
+const skillTree = createSkillTree(store.db, tflopsSource);
 
 interface ConnMeta {
   playerId: string;
@@ -161,15 +163,36 @@ function broadcastCaptures(lobbyId: string): void {
   }
 }
 
-// A scrap/TFLOPS balance is private to the player it belongs to — unlike
-// LobbyState (identical for every socket in a lobby), this is never
-// broadcast, only sent to the owning player's own socket(s) (ANU-020).
+// A scrap balance / live TFLOPS reading is private to the player it belongs
+// to — unlike LobbyState (identical for every socket in a lobby), this is
+// never broadcast, only sent to the owning player's own socket(s) (ANU-020).
 function sendEconomyToPlayer(lobbyId: string, playerId: string): void {
   const economy = store.getMemberEconomy(lobbyId, playerId);
   if (!economy) return;
-  const message: ServerMessage = { type: "economy", scrap: economy.scrap, tflops: economy.tflops };
+  const message: ServerMessage = { type: "economy", scrap: economy.scrap, tflops: tflopsSource.getTflops(lobbyId, playerId) };
   for (const [socket, meta] of sockets) {
     if (meta.lobbyId === lobbyId && meta.playerId === playerId) send(socket, message);
+  }
+}
+
+// Per-player, not lobby-wide (server/skill-tree.ts is per-player state) —
+// settles any just-completed research, then sends the result to every live
+// socket belonging to this player (multi-tab support), same convention
+// ANU-016's purchaseNode handler established. Shared by the
+// `startResearch` handler below and the ticker's per-member sweep; `hello`
+// sends its own one-off copy directly to the just-connected socket instead.
+function sendSkillTreeToPlayer(lobbyId: string, playerId: string): void {
+  const result = skillTree.getState(lobbyId, playerId);
+  const message: ServerMessage = {
+    type: "skillTree",
+    playerId,
+    unlockedNodeIds: result.unlockedNodeIds,
+    researching: result.researching,
+    multipliers: store.perks.getPerkMultipliers(lobbyId, playerId),
+    tflops: tflopsSource.getTflops(lobbyId, playerId),
+  };
+  for (const [socket, meta] of sockets) {
+    if (meta.playerId === playerId) send(socket, message);
   }
 }
 
@@ -253,7 +276,14 @@ heartbeat.unref();
 const factoryTicker = setInterval(() => {
   const liveLobbyIds = new Set([...sockets.values()].map((m) => m.lobbyId).filter((id): id is string => id !== null));
   for (const lobbyId of liveLobbyIds) {
-    if (store.getLobby(lobbyId)?.started) broadcastFactories(lobbyId);
+    if (!store.getLobby(lobbyId)?.started) continue;
+    broadcastFactories(lobbyId);
+    // Same settle-and-push shape as broadcastFactories above, but per
+    // player (server/skill-tree.ts's research state is per-player, not
+    // lobby-wide) — so a node that finishes researching with nobody having
+    // sent a message in the meantime still reaches that player's socket(s)
+    // within ~1s, same target spec/realtime.test.ts holds factories to.
+    for (const member of store.getLobbyMembers(lobbyId)) sendSkillTreeToPlayer(lobbyId, member.playerId);
   }
 }, 1000);
 factoryTicker.unref();
@@ -316,12 +346,14 @@ wss.on("connection", (socket) => {
       if (lobbyId) send(socket, { type: "captures", lobbyId, captures: pendingCaptures });
       if (lobbyId) sendEconomyToPlayer(lobbyId, playerId);
       if (lobbyId) {
+        const result = skillTree.getState(lobbyId, playerId);
         send(socket, {
           type: "skillTree",
           playerId,
-          unlockedNodeIds: skillTree.getUnlockedNodeIds(lobbyId, playerId),
+          unlockedNodeIds: result.unlockedNodeIds,
+          researching: result.researching,
           multipliers: store.perks.getPerkMultipliers(lobbyId, playerId),
-          tflops: store.getMemberEconomy(lobbyId, playerId)?.tflops ?? 0,
+          tflops: tflopsSource.getTflops(lobbyId, playerId),
         });
       }
       if (lobbyId) broadcastLobbyState(lobbyId); // this player's online status just changed
@@ -430,27 +462,14 @@ wss.on("connection", (socket) => {
       return;
     }
 
-    if (message.type === "purchaseNode") {
+    if (message.type === "startResearch") {
       if (!meta.lobbyId || !store.getLobby(meta.lobbyId)?.started) return;
-      const result = skillTree.purchaseNode(meta.lobbyId, meta.playerId, message.nodeId);
+      const result = skillTree.startResearch(meta.lobbyId, meta.playerId, message.nodeId);
       if (!result.ok) {
-        send(socket, { type: "error", message: `purchaseNode: ${result.reason}` });
+        send(socket, { type: "error", message: `startResearch: ${result.reason}` });
         return;
       }
-      // Per-player, not lobby-wide (server/skill-tree.ts is per-player
-      // state) — only the purchasing player's own sockets need the result.
-      const tflops = store.getMemberEconomy(meta.lobbyId, meta.playerId)?.tflops ?? 0;
-      for (const [otherSocket, otherMeta] of sockets) {
-        if (otherMeta.playerId === meta.playerId) {
-          send(otherSocket, {
-            type: "skillTree",
-            playerId: meta.playerId,
-            unlockedNodeIds: result.unlockedNodeIds,
-            multipliers: result.multipliers,
-            tflops,
-          });
-        }
-      }
+      sendSkillTreeToPlayer(meta.lobbyId, meta.playerId);
       return;
     }
 
