@@ -68,8 +68,8 @@ export function seedBaseUnitTypes(db: DatabaseSync): void {
       build_time_ms = excluded.build_time_ms,
       movement_mode = excluded.movement_mode
   `);
-  upsert.run("drone", 3, 2, 2, 1500, "fly");
-  upsert.run("robot", 6, 4, 4, 3000, "ground");
+  upsert.run("drone", 3, 2, 2, 30_000, "fly");
+  upsert.run("robot", 6, 4, 4, 120_000, "ground");
 }
 
 /**

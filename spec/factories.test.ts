@@ -99,8 +99,8 @@ it("a completed production cycle places a real unit via ANU-013's occupancy prim
   const { store, factories, units, lobbyId, owner } = setupSingle();
   const factory = factories.getFactories(lobbyId)[0];
 
-  // drone build_time_ms is seeded at 1500 (server/units.ts) — force it complete.
-  rewindCycle(store, factory.id, "drone", 5000);
+  // drone build_time_ms is seeded at 30,000 (server/units.ts) — force it complete.
+  rewindCycle(store, factory.id, "drone", 35_000);
 
   const settled = factories.getFactories(lobbyId)[0];
   const droneCycle = settled.production.find((p) => p.unitTypeKey === "drone")!;
@@ -121,8 +121,8 @@ it("a production cycle's progress fraction is scaled by factoryBuildSpeedMultipl
   store.perks.setPerkMultiplier(lobbyId, owner, "factoryBuildSpeedMultiplier", 2); // twice as fast
   const factory = factories.getFactories(lobbyId)[0]; // creates cycle rows, both started "now"
 
-  // Half of (robot's 3000ms / 2 = 1500ms effective duration) elapsed = 750ms ago.
-  rewindCycle(store, factory.id, "robot", 750);
+  // Half of (robot's 120,000ms / 2 = 60,000ms effective duration) elapsed = 30,000ms ago.
+  rewindCycle(store, factory.id, "robot", 30_000);
 
   const state = factories.getFactories(lobbyId).find((f) => f.id === factory.id)!;
   const robotCycle = state.production.find((p) => p.unitTypeKey === "robot")!;
@@ -246,7 +246,7 @@ it("transferFactoryOwnership (confirmed: capture TRANSFERS the factory, doesn't 
 
   // Force completion — the resulting unit must belong to the NEW owner, not
   // whoever owned the factory when the cycle started.
-  rewindCycle(store, factory.id, "drone", 5000);
+  rewindCycle(store, factory.id, "drone", 35_000);
   factories.getFactories(lobbyId); // triggers settle()
 
   const placedUnits = units.getOccupancy(lobbyId);

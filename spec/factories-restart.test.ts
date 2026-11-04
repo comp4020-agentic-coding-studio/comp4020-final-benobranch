@@ -74,12 +74,12 @@ interface FactoryMsgShape {
 }
 
 it("a factory's auto-production cycle survives a real process restart mid-cycle with correct elapsed progress, not reset or lost", async () => {
-  // A LOW scale (robot's 3000ms design duration stretched to 30 real
-  // seconds) ensures the cycle genuinely can't finish during the brief
-  // restart window — same reasoning spec/territory.test.ts's restart test
-  // documents for its own scale choice, just in the opposite direction
-  // (that test speeds time up; this one needs it slowed down so a cycle in
-  // progress stays in progress across the restart).
+  // A LOW scale (robot's 120,000ms/2min design duration stretched even
+  // further in real time) ensures the cycle genuinely can't finish during
+  // the brief restart window — same reasoning spec/territory.test.ts's
+  // restart test documents for its own scale choice, just in the opposite
+  // direction (that test speeds time up; this one needs it slowed down so a
+  // cycle in progress stays in progress across the restart).
   const SCALE = 0.1;
   const first = await spawnServer({ port, dataDir, gameTimeScale: SCALE });
   servers.push(first);
@@ -114,7 +114,7 @@ it("a factory's auto-production cycle survives a real process restart mid-cycle 
   const resumedFactory = (resumedFactoriesMsg.factories as FactoryMsgShape[])[0];
   const robotCycleResumed = resumedFactory.production.find((p) => p.unitTypeKey === "robot")!;
   expect(robotCycleResumed.progressFraction, "progress must have continued across the restart, not reset to 0").toBeGreaterThan(0);
-  expect(robotCycleResumed.progressFraction, "robot's 3000ms design duration at 0.1x scale is a 30 real-second cycle — nowhere near complete yet").toBeLessThan(0.5);
+  expect(robotCycleResumed.progressFraction, "robot's 120,000ms (2min) design duration at 0.1x scale is a 20 real-minute cycle — nowhere near complete yet").toBeLessThan(0.5);
 
   await closeAndWait(resumedCreator);
 }, 20_000);

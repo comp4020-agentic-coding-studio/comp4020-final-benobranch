@@ -148,8 +148,8 @@ it("hello yields a unitCatalog with the real seeded drone/robot stats, not place
   expect(drone).toBeDefined();
   expect(robot).toBeDefined();
   // server/units.ts's seedBaseUnitTypes — real values, not zeroed placeholders.
-  expect(drone).toMatchObject({ health: 3, damage: 2, scrapValue: 2, buildTimeMs: 1500, movementMode: "fly" });
-  expect(robot).toMatchObject({ health: 6, damage: 4, scrapValue: 4, buildTimeMs: 3000, movementMode: "ground" });
+  expect(drone).toMatchObject({ health: 3, damage: 2, scrapValue: 2, buildTimeMs: 30_000, movementMode: "fly" });
+  expect(robot).toMatchObject({ health: 6, damage: 4, scrapValue: 4, buildTimeMs: 120_000, movementMode: "ground" });
 
   await closeAndWait(client);
 });
