@@ -151,6 +151,15 @@ export interface PlayerPresence {
   online: boolean;
   /** Assigned once at join (see ADR 0002's "locked in" precedent for callsign), unique per lobby. */
   color: string;
+  /**
+   * The suburb this player was assigned at kickoff (territory.ts's
+   * assignSpawnOwnership) — null before the lobby has started. Distinct
+   * from current ownership: a player's base marker (ANU-025) renders here
+   * only while `ownership[spawnSalCode] === playerId` still holds, so it
+   * disappears the moment this suburb is captured rather than following
+   * the player to wherever they currently hold territory.
+   */
+  spawnSalCode: string | null;
 }
 
 export interface LobbyState {

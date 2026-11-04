@@ -75,7 +75,13 @@ function buildLobbyState(lobby: StoredLobby): LobbyState {
     started: lobby.started,
     startedAt: lobby.startedAt,
     gameElapsedMs: elapsedMs(lobby.startedAt),
-    members: members.map((m) => ({ playerId: m.playerId, name: m.name, online: isOnline(m.playerId), color: m.color })),
+    members: members.map((m) => ({
+      playerId: m.playerId,
+      name: m.name,
+      online: isOnline(m.playerId),
+      color: m.color,
+      spawnSalCode: m.spawnSalCode,
+    })),
     ownership: territory.getOwnership(lobby.lobbyId),
   };
 }

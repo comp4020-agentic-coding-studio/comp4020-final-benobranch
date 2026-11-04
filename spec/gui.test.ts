@@ -144,6 +144,14 @@ it("serves the map's unit/factory/ownership SVG layers for ANU-020's renderUnits
   expect(document.querySelector("#map-units")).not.toBeNull();
 });
 
+it("serves the map's base SVG layer for ANU-025's renderBases to mount into", async () => {
+  const res = await fetch(new URL("/", baseUrl));
+  const dom = new JSDOM(await res.text());
+  const { document } = dom.window;
+
+  expect(document.querySelector("#map-bases")).not.toBeNull();
+});
+
 it("serves a reachable Options placeholder screen", async () => {
   const res = await fetch(new URL("/", baseUrl));
   const dom = new JSDOM(await res.text());

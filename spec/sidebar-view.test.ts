@@ -16,8 +16,8 @@ const ME = "p1";
 const THEM = "p2";
 
 const MEMBERS = [
-  { playerId: ME, name: "Alice", online: true, color: "#30b319" },
-  { playerId: THEM, name: "Bob", online: true, color: "#2419b3" },
+  { playerId: ME, name: "Alice", online: true, color: "#30b319", spawnSalCode: null },
+  { playerId: THEM, name: "Bob", online: true, color: "#2419b3", spawnSalCode: null },
 ];
 
 it("an unowned suburb with no occupants reports a null owner and no actions", () => {

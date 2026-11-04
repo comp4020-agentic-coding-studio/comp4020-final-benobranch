@@ -41,6 +41,8 @@ export interface StoredMember {
   name: string;
   /** Assigned once at join, unique per lobby, locked for its lifetime — same precedent as callsign. */
   color: string;
+  /** This player's kickoff spawn suburb (territory.ts's assignSpawnOwnership) — null before the lobby has started. */
+  spawnSalCode: string | null;
 }
 
 export interface MemberEconomy {
@@ -123,7 +125,7 @@ export function openStore(dbPath: string): Store {
   // members by rowid on every reconnect — join order needs to stay stable
   // since ANU-013's spawn-ownership-at-kickoff assigns spawns by it.
   const selectMembers = db.prepare(`
-    SELECT player_id AS playerId, name, color FROM lobby_members
+    SELECT player_id AS playerId, name, color, spawn_sal_code AS spawnSalCode FROM lobby_members
     WHERE lobby_id = ? ORDER BY joined_at, player_id
   `);
   const selectMemberRow = db.prepare(
@@ -635,6 +637,27 @@ function migrate(db: DatabaseSync): void {
       db.exec("ALTER TABLE unit_types RENAME COLUMN build_cost_scrap TO scrap_value");
 
       db.exec("PRAGMA user_version = 6");
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
+  // v7 (ANU-025): a player's base marker needs to know which suburb they
+  // were originally assigned at kickoff, distinct from (and outliving
+  // changes to) current suburb_ownership — see territory.ts's
+  // assignSpawnOwnership, which now also writes here. Existing lobbies have
+  // no way to recover a past kickoff's assignment, so this backfills NULL
+  // (no base marker) for anyone who started a game before this version
+  // rather than guessing from current ownership. `ADD COLUMN`, not `DROP
+  // COLUMN` — issues/ANU-023.md's schema-corruption quirk only triggers on
+  // DROP, so no rebuild-via-copy needed here.
+  if (version < 7) {
+    db.exec("BEGIN");
+    try {
+      db.exec("ALTER TABLE lobby_members ADD COLUMN spawn_sal_code TEXT");
+      db.exec("PRAGMA user_version = 7");
       db.exec("COMMIT");
     } catch (err) {
       db.exec("ROLLBACK");

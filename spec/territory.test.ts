@@ -13,6 +13,8 @@ import { spawnServer, type SpawnedServer } from "./lib/spawn-server.ts";
 import { pathVertices, minVertexDistance } from "./lib/svg-path.ts";
 import { PLAYER_COLORS } from "../server/protocol.ts";
 import { DATA_CENTER_TIER_COLORS } from "../server/public/data-center-visual.js";
+import { openStore } from "../server/store.ts";
+import { createTerritory } from "../server/territory.ts";
 
 const baseUrl = inject("baseUrl");
 
@@ -263,7 +265,66 @@ describe("spawn-ownership at kickoff", () => {
     const memberIds = new Set(lobby.members.map((m) => m.playerId));
     expect(ownerIds, "every owner must be a real lobby member").toEqual(memberIds);
 
+    // ANU-025: each member's broadcast spawnSalCode is exactly the suburb
+    // they were assigned (and still own) at kickoff — the data a base
+    // marker renders from.
+    const fullMembers = lobby.members as { playerId: string; spawnSalCode: string | null }[];
+    for (const member of fullMembers) {
+      expect(member.spawnSalCode, `member ${member.playerId} should have a spawnSalCode set at kickoff`).not.toBeNull();
+      expect(lobby.ownership[member.spawnSalCode!], "a member's spawnSalCode must be a suburb they currently own").toBe(member.playerId);
+    }
+
     for (const c of [creator, ...joiners]) await closeAndWait(c);
+  });
+});
+
+describe("player bases (ANU-025): spawnSalCode persists independently of current ownership", () => {
+  it("a member's spawnSalCode survives a later capture of that suburb by someone else — the data a base marker relies on to disappear", () => {
+    // Module-level (not over-the-wire): exercises territory.ts/store.ts
+    // directly against a real in-memory connection, same pattern as
+    // spec/factories.test.ts — there's no protocol message to directly
+    // transfer ownership, only a real attack flow, which isn't what this
+    // test needs to exercise.
+    const store = openStore(":memory:");
+    const territory = createTerritory(store.db);
+    const { playerId: owner } = store.resolvePlayer(undefined);
+    const { playerId: attacker } = store.resolvePlayer(undefined);
+    const lobby = store.createLobby("base-capture-test", 4, owner, "owner");
+    store.joinLobby(attacker, lobby.lobbyId, "attacker");
+    store.startLobby(lobby.lobbyId);
+    territory.assignSpawnOwnership(lobby.lobbyId, [owner, attacker]);
+
+    const members = store.getLobbyMembers(lobby.lobbyId);
+    const ownerMember = members.find((m) => m.playerId === owner)!;
+    expect(ownerMember.spawnSalCode, "owner should have a spawn suburb assigned").not.toBeNull();
+    const baseSalCode = ownerMember.spawnSalCode!;
+    expect(territory.getOwnership(lobby.lobbyId)[baseSalCode]).toBe(owner);
+
+    // Simulate the attacker capturing the owner's base suburb — same
+    // upsert territory.ts's own ownership-transfer path uses internally,
+    // reached directly here rather than via units.ts's full attack flow
+    // (out of scope for this test — only the ownership-vs-spawnSalCode
+    // relationship is under test).
+    store.db
+      .prepare(
+        "UPDATE suburb_ownership SET owner_player_id = ? WHERE lobby_id = ? AND sal_code = ?",
+      )
+      .run(attacker, lobby.lobbyId, baseSalCode);
+
+    // spawnSalCode itself is untouched by the capture — it's the
+    // kickoff-only assignment, not a live-ownership mirror.
+    const afterCapture = store.getLobbyMembers(lobby.lobbyId).find((m) => m.playerId === owner)!;
+    expect(afterCapture.spawnSalCode, "spawnSalCode must survive a capture unchanged").toBe(baseSalCode);
+
+    // What actually changed, and what a base marker's render check
+    // (`ownership[member.spawnSalCode] === member.playerId`) relies on: the
+    // owner no longer owns their own spawnSalCode.
+    const ownershipAfter = territory.getOwnership(lobby.lobbyId);
+    expect(ownershipAfter[baseSalCode], "the base suburb should now be owned by the attacker").toBe(attacker);
+    expect(
+      ownershipAfter[afterCapture.spawnSalCode!] === owner,
+      "the owner's base marker render check must now read false — their base is no longer theirs",
+    ).toBe(false);
   });
 });
 

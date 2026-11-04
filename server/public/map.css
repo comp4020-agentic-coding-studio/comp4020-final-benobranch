@@ -185,6 +185,18 @@
   pointer-events: none; /* see .dc-marker — same overhang-at-zoom reasoning */
 }
 
+/* ANU-025: a player's base — decorative, same as .dc-marker/.spawn-marker,
+   not a selectable game object (no dataset/click handling in renderBases). */
+.base-marker {
+  pointer-events: none;
+}
+
+.base-marker__backdrop {
+  stroke: #05201c;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
 .map-tooltip {
   position: absolute;
   left: 0;
