@@ -75,32 +75,27 @@ export interface ClientPlaceUnit {
   unitTypeKey: string;
 }
 
-export interface ClientMoveUnit {
+export interface ClientMoveUnits {
   /**
-   * Relocates an already-placed unit to an undefended suburb. ANU-014
-   * replaces the "any suburb" placeholder eligibility with real movement
-   * rules: unrestricted for a "fly" unit (drones), road-adjacent-to-an-
-   * owned-suburb for a "ground" unit (robots) — see server/units.ts. A
-   * target holding an enemy unit is rejected by moveUnit; use
-   * `attackSuburb` for that.
+   * Risk-style bulk move/attack order (ANU-027), replacing the old
+   * one-unit-at-a-time `moveUnit`/`attackSuburb` messages: pick a source
+   * suburb the player has units in, declare how many of each unit type to
+   * send, then a destination. `counts` is keyed by `unit_types.key` (e.g.
+   * `{ drone: 5, robot: 2 }`) — a type with no entry (or a zero/negative
+   * count) sends none of that type. Uses the same movement-mode
+   * reachability rule `moveUnit`/`attackSuburb` always did (unrestricted
+   * for drones, road-adjacent-to-owned for robots — server/units.ts), now
+   * enforced per type across the whole order: if any requested type can't
+   * reach `toSalCode`, or more of a type is requested than currently sit
+   * at `fromSalCode`, the WHOLE order is rejected, not partially applied.
+   * If the destination holds no enemy units ("undefended"), each sent unit
+   * just moves there; otherwise each one resolves combat in turn against
+   * whichever defender remains, same per-unit combat rule as before.
    */
-  type: "moveUnit";
-  unitId: string;
-  sal_code: string;
-}
-
-export interface ClientAttackSuburb {
-  /**
-   * Sends an already-placed unit at a target suburb, using the same
-   * reachability rule as `moveUnit` (ANU-014: unrestricted for drones,
-   * road-adjacent-to-owned for robots). If the target holds no enemy
-   * units ("undefended"), this behaves like a plain move; otherwise it
-   * resolves combat against the first defender there (stable spawn
-   * order) with a random element — see server/units.ts.
-   */
-  type: "attackSuburb";
-  unitId: string;
-  sal_code: string;
+  type: "moveUnits";
+  fromSalCode: string;
+  toSalCode: string;
+  counts: Record<string, number>;
 }
 
 export interface ClientBuildFactory {
@@ -145,8 +140,7 @@ export type ClientMessage =
   | ClientWatchLobbies
   | ClientUnwatchLobbies
   | ClientPlaceUnit
-  | ClientMoveUnit
-  | ClientAttackSuburb
+  | ClientMoveUnits
   | ClientBuildFactory
   | ClientStartResearch;
 
@@ -376,8 +370,16 @@ const MAX_TOKEN_LENGTH = 100;
 const MAX_LOBBY_ID_LENGTH = 64;
 const MAX_SAL_CODE_LENGTH = 16;
 const MAX_UNIT_TYPE_KEY_LENGTH = 32;
-const MAX_UNIT_ID_LENGTH = 64;
 const MAX_NODE_ID_LENGTH = 32;
+// moveUnits' counts object: bounded defensively (there are only 2 seeded
+// unit types today, ANU-016 variants stay in the single digits) rather than
+// left unbounded, same reasoning every other array/object-shaped field in
+// this parser gets a cap.
+const MAX_MOVE_UNITS_TYPES = 32;
+// A lobby's whole production run never approaches this per-order — bounds
+// the field defensively against a malformed/hostile payload, not a real
+// gameplay limit.
+const MAX_MOVE_UNITS_COUNT = 100_000;
 // PLAN.md "Players & spawn balance" (settled by ANU-006): games are 4-12
 // players, minimum 4 to start. Tightened from ANU-008's placeholder 2-16
 // range now that the real rule has landed.
@@ -490,26 +492,30 @@ export function parseClientMessage(raw: string): ClientMessage {
     return { type: "placeUnit", sal_code, unitTypeKey };
   }
 
-  if (type === "moveUnit") {
-    const { unitId, sal_code } = data as Partial<ClientMoveUnit>;
-    if (!isNonEmptyString(unitId, MAX_UNIT_ID_LENGTH)) {
-      throw new Error("'moveUnit' requires a non-empty 'unitId'");
+  if (type === "moveUnits") {
+    const { fromSalCode, toSalCode, counts } = data as Partial<ClientMoveUnits>;
+    if (!isNonEmptyString(fromSalCode, MAX_SAL_CODE_LENGTH)) {
+      throw new Error("'moveUnits' requires a non-empty 'fromSalCode'");
     }
-    if (!isNonEmptyString(sal_code, MAX_SAL_CODE_LENGTH)) {
-      throw new Error("'moveUnit' requires a non-empty 'sal_code'");
+    if (!isNonEmptyString(toSalCode, MAX_SAL_CODE_LENGTH)) {
+      throw new Error("'moveUnits' requires a non-empty 'toSalCode'");
     }
-    return { type: "moveUnit", unitId, sal_code };
-  }
-
-  if (type === "attackSuburb") {
-    const { unitId, sal_code } = data as Partial<ClientAttackSuburb>;
-    if (!isNonEmptyString(unitId, MAX_UNIT_ID_LENGTH)) {
-      throw new Error("'attackSuburb' requires a non-empty 'unitId'");
+    if (typeof counts !== "object" || counts === null || Array.isArray(counts)) {
+      throw new Error("'moveUnits' requires a 'counts' object");
     }
-    if (!isNonEmptyString(sal_code, MAX_SAL_CODE_LENGTH)) {
-      throw new Error("'attackSuburb' requires a non-empty 'sal_code'");
+    const countEntries = Object.entries(counts);
+    if (countEntries.length > MAX_MOVE_UNITS_TYPES) {
+      throw new Error(`'moveUnits.counts' must have at most ${MAX_MOVE_UNITS_TYPES} entries`);
     }
-    return { type: "attackSuburb", unitId, sal_code };
+    for (const [unitTypeKey, count] of countEntries) {
+      if (!isNonEmptyString(unitTypeKey, MAX_UNIT_TYPE_KEY_LENGTH)) {
+        throw new Error("'moveUnits.counts' keys must be non-empty unit type keys");
+      }
+      if (typeof count !== "number" || !Number.isInteger(count) || count < 0 || count > MAX_MOVE_UNITS_COUNT) {
+        throw new Error(`'moveUnits.counts' values must be integers between 0 and ${MAX_MOVE_UNITS_COUNT}`);
+      }
+    }
+    return { type: "moveUnits", fromSalCode, toSalCode, counts: counts as Record<string, number> };
   }
 
   if (type === "buildFactory") {

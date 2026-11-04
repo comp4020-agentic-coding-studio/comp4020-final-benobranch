@@ -421,31 +421,20 @@ wss.on("connection", (socket) => {
       return;
     }
 
-    if (message.type === "moveUnit") {
+    if (message.type === "moveUnits") {
       if (!meta.lobbyId || !store.getLobby(meta.lobbyId)?.started) return;
-      const result = units.moveUnit(meta.lobbyId, meta.playerId, message.unitId, message.sal_code);
+      const result = units.moveUnits(meta.lobbyId, meta.playerId, message.fromSalCode, message.toSalCode, message.counts);
       if (!result.ok) {
-        send(socket, { type: "error", message: `moveUnit: ${result.reason}` });
-        return;
-      }
-      broadcastOccupancy(meta.lobbyId);
-      broadcastCaptures(meta.lobbyId); // the unit arriving/leaving can start, pause, resume or reset a capture
-      return;
-    }
-
-    if (message.type === "attackSuburb") {
-      if (!meta.lobbyId || !store.getLobby(meta.lobbyId)?.started) return;
-      const result = units.attackSuburb(meta.lobbyId, meta.playerId, message.unitId, message.sal_code);
-      if (!result.ok) {
-        send(socket, { type: "error", message: `attackSuburb: ${result.reason}` });
+        send(socket, { type: "error", message: `moveUnits: ${result.reason}` });
         return;
       }
       broadcastOccupancy(meta.lobbyId);
       // A kill credits scrap (server/units.ts) — update the attacker's own
       // sidebar economy readout (ANU-020); move/hit outcomes don't change it.
-      if (result.outcome === "kill") sendEconomyToPlayer(meta.lobbyId, meta.playerId);
+      if (result.outcomes.some((o) => o.outcome === "kill")) sendEconomyToPlayer(meta.lobbyId, meta.playerId);
       // A kill/advance can clear a defended suburb down to a single occupant
-      // (or an empty one), which can start, pause, resume or reset a capture.
+      // (or an empty one), or units arriving/leaving can start, pause,
+      // resume or reset a capture at either end of the order.
       broadcastCaptures(meta.lobbyId);
       return;
     }

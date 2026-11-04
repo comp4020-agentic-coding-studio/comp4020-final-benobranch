@@ -1,10 +1,12 @@
-// Checks ANU-014's attackSuburb message over the real WebSocket protocol:
-// accept/reject on movement-mode reachability only (drone vs. non-adjacent
-// target, robot rejected there, robot vs. an adjacent owned-corridor
-// target). Combat's random element itself (who wins a contested hit) is
-// NOT asserted here — that needs an injectable rng, which no message
-// carries, so it's covered directly against server/units.ts in
-// spec/units.test.ts instead.
+// Checks ANU-014's movement-mode reachability rule over the real WebSocket
+// protocol, via ANU-027's moveUnits message (the only wire-level way to
+// move/attack as of that issue — the old one-unit-at-a-time moveUnit/
+// attackSuburb messages were removed): accept/reject on reachability only
+// (drone vs. non-adjacent target, robot rejected there, robot vs. an
+// adjacent owned-corridor target). Combat's random element itself (who wins
+// a contested hit) is NOT asserted here — that needs an injectable rng,
+// which no message carries, so it's covered directly against
+// server/units.ts in spec/units.test.ts instead.
 import { readFileSync } from "node:fs";
 import { expect, inject, it } from "vitest";
 import WebSocket from "ws";
@@ -93,42 +95,41 @@ async function createStartedLobby(name: string): Promise<Client> {
   return creator;
 }
 
-it("a drone's attackSuburb succeeds against a suburb with no road adjacency to the attacker's territory", async () => {
+it("a drone's moveUnits order succeeds against a suburb with no road adjacency to the attacker's territory", async () => {
   const creator = await createStartedLobby(`combat-drone-${Date.now()}`);
 
   send(creator, { type: "placeUnit", sal_code: SPAWN_SAL_CODE, unitTypeKey: "drone" });
   const placed = await waitFor(creator, (m) => m.type === "occupancy" && (m.units as { sal_code: string }[]).some((u) => u.sal_code === SPAWN_SAL_CODE));
   const unitId = (placed.units as { id: string; sal_code: string }[]).find((u) => u.sal_code === SPAWN_SAL_CODE)!.id;
 
-  send(creator, { type: "attackSuburb", unitId, sal_code: NON_ADJACENT_SAL_CODE });
+  send(creator, { type: "moveUnits", fromSalCode: SPAWN_SAL_CODE, toSalCode: NON_ADJACENT_SAL_CODE, counts: { drone: 1 } });
   const moved = await waitFor(creator, (m) => m.type === "occupancy" && (m.units as { id: string; sal_code: string }[]).some((u) => u.id === unitId && u.sal_code === NON_ADJACENT_SAL_CODE));
   expect((moved.units as { id: string; sal_code: string }[]).some((u) => u.id === unitId && u.sal_code === NON_ADJACENT_SAL_CODE)).toBe(true);
 
   await closeAndWait(creator);
 });
 
-it("a robot's attackSuburb against the same non-adjacent target is rejected", async () => {
+it("a robot's moveUnits order against the same non-adjacent target is rejected", async () => {
   const creator = await createStartedLobby(`combat-robot-reject-${Date.now()}`);
 
   send(creator, { type: "placeUnit", sal_code: SPAWN_SAL_CODE, unitTypeKey: "robot" });
-  const placed = await waitFor(creator, (m) => m.type === "occupancy" && (m.units as { sal_code: string }[]).some((u) => u.sal_code === SPAWN_SAL_CODE));
-  const unitId = (placed.units as { id: string; sal_code: string }[]).find((u) => u.sal_code === SPAWN_SAL_CODE)!.id;
+  await waitFor(creator, (m) => m.type === "occupancy" && (m.units as { sal_code: string }[]).some((u) => u.sal_code === SPAWN_SAL_CODE));
 
-  send(creator, { type: "attackSuburb", unitId, sal_code: NON_ADJACENT_SAL_CODE });
+  send(creator, { type: "moveUnits", fromSalCode: SPAWN_SAL_CODE, toSalCode: NON_ADJACENT_SAL_CODE, counts: { robot: 1 } });
   const error = await waitFor(creator, (m) => m.type === "error");
   expect((error.message as string).toLowerCase()).toContain("unreachable");
 
   await closeAndWait(creator);
 });
 
-it("a robot's attackSuburb against an adjacent, owned-corridor target succeeds", async () => {
+it("a robot's moveUnits order against an adjacent, owned-corridor target succeeds", async () => {
   const creator = await createStartedLobby(`combat-robot-accept-${Date.now()}`);
 
   send(creator, { type: "placeUnit", sal_code: SPAWN_SAL_CODE, unitTypeKey: "robot" });
   const placed = await waitFor(creator, (m) => m.type === "occupancy" && (m.units as { sal_code: string }[]).some((u) => u.sal_code === SPAWN_SAL_CODE));
   const unitId = (placed.units as { id: string; sal_code: string }[]).find((u) => u.sal_code === SPAWN_SAL_CODE)!.id;
 
-  send(creator, { type: "attackSuburb", unitId, sal_code: ADJACENT_SAL_CODE });
+  send(creator, { type: "moveUnits", fromSalCode: SPAWN_SAL_CODE, toSalCode: ADJACENT_SAL_CODE, counts: { robot: 1 } });
   const moved = await waitFor(creator, (m) => m.type === "occupancy" && (m.units as { id: string; sal_code: string }[]).some((u) => u.id === unitId && u.sal_code === ADJACENT_SAL_CODE));
   expect((moved.units as { id: string; sal_code: string }[]).some((u) => u.id === unitId && u.sal_code === ADJACENT_SAL_CODE)).toBe(true);
 

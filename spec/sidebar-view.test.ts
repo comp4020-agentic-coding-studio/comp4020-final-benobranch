@@ -9,6 +9,11 @@
 // ANU-022 removed canQueueUnit (a factory auto-produces on a timer, no
 // player-picked queue to gate) — these cases now only check canBuildFactory
 // and that `factory`/`production` pass through unchanged.
+//
+// ANU-027 replaced `sendableUnits` (a flat list of the player's own units
+// everywhere) with `movableUnitGroups` (the player's own units AT THE
+// SELECTED SUBURB ONLY, grouped by type with a count) — the Risk-style
+// "Move units" quantity panel's per-row data.
 import { expect, it } from "vitest";
 import { suburbDetailViewModel } from "../server/public/suburb-detail-view.js";
 
@@ -78,18 +83,39 @@ it("an enemy-owned suburb with an enemy factory offers no build action to me", (
   expect(detail.canBuildFactory).toBe(false);
 });
 
-it("sendableUnits is filtered to only the viewing player's own units, regardless of suburb", () => {
-  const myUnit = { id: "u1", ownerPlayerId: ME, sal_code: "80002-0", unitTypeKey: "drone", health: 3 };
-  const theirUnit = { id: "u2", ownerPlayerId: THEM, sal_code: "80003-0", unitTypeKey: "robot", health: 6 };
+it("movableUnitGroups is filtered to the selected suburb and the viewing player's own units, grouped by type with a count", () => {
+  const myDrone1 = { id: "u1", ownerPlayerId: ME, sal_code: "80001-0", unitTypeKey: "drone", health: 3 };
+  const myDrone2 = { id: "u2", ownerPlayerId: ME, sal_code: "80001-0", unitTypeKey: "drone", health: 3 };
+  const myRobot = { id: "u3", ownerPlayerId: ME, sal_code: "80001-0", unitTypeKey: "robot", health: 6 };
+  const theirUnit = { id: "u4", ownerPlayerId: THEM, sal_code: "80001-0", unitTypeKey: "robot", health: 6 };
+  const myUnitElsewhere = { id: "u5", ownerPlayerId: ME, sal_code: "80002-0", unitTypeKey: "drone", health: 3 };
   const detail = suburbDetailViewModel({
     sal_code: "80001-0",
     ownership: {},
-    occupancy: [myUnit, theirUnit],
+    occupancy: [myDrone1, myDrone2, myRobot, theirUnit, myUnitElsewhere],
     factories: [],
     members: MEMBERS,
     myPlayerId: ME,
   });
-  expect(detail.sendableUnits).toEqual([myUnit]);
+  expect(detail.movableUnitGroups).toEqual(
+    expect.arrayContaining([
+      { unitTypeKey: "drone", count: 2 },
+      { unitTypeKey: "robot", count: 1 },
+    ]),
+  );
+  expect(detail.movableUnitGroups).toHaveLength(2);
+});
+
+it("movableUnitGroups is empty when the player has no units at the selected suburb", () => {
+  const detail = suburbDetailViewModel({
+    sal_code: "80001-0",
+    ownership: {},
+    occupancy: [],
+    factories: [],
+    members: MEMBERS,
+    myPlayerId: ME,
+  });
+  expect(detail.movableUnitGroups).toEqual([]);
 });
 
 it("occupants lists every unit standing in the selected suburb specifically, regardless of owner", () => {
