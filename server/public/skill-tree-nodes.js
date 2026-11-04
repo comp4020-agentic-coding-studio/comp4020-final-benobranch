@@ -28,7 +28,19 @@
  *   (drone-chassis/robot-chassis), or a node whose own id gates building a
  *   matching skill-tree unit_types row (advanced-drone/advanced-robot — see
  *   server/skill-tree.ts's seedSkillGatedUnitTypes).
- * @property {string} icon
+ * @property {string} icon - path (relative to server/public/) of the node's
+ *   32x32 pixel-art icon — ANU-029: the "glitch white" set (folder 14) of the
+ *   craftpix.net Free Skill 32x32 Icons for Cyberpunk Game pack.
+ * @property {string} name - display name for the Research tab (ANU-029).
+ * @property {string} description - one-line effect summary for the Research
+ *   tab. Kept in sync by hand with server/skill-tree.ts's PERK_EFFECTS
+ *   values and seedSkillGatedUnitTypes stats.
+ * @property {boolean} effectLive - false while the node's perk multiplier
+ *   has no reader anywhere in the server, so the GUI can say so instead of
+ *   advertising an effect that doesn't happen (ANU-029). data-uplink: no
+ *   TFLOPS-flow mechanic exists (ANU-016's Resolution). rapid-capture:
+ *   captureSpeedMultiplier's reader is ANU-017's capture-progress code,
+ *   not yet merged — flip to true when it lands.
  */
 
 // drone-chassis/robot-chassis are deliberately pure tech gates with no perk
@@ -42,18 +54,18 @@
 // old costTflops values (10/15) x3000ms, kept only as a starting point.
 /** @type {SkillNodeDef[]} */
 export const SKILL_NODES = [
-  { id: "drone-chassis", prerequisiteId: null, baseResearchTimeMs: 30_000, effectKind: "structural", icon: "drone" },
-  { id: "advanced-drone", prerequisiteId: "drone-chassis", baseResearchTimeMs: 45_000, effectKind: "structural", icon: "drone" },
-  { id: "robot-chassis", prerequisiteId: null, baseResearchTimeMs: 30_000, effectKind: "structural", icon: "robot" },
-  { id: "advanced-robot", prerequisiteId: "robot-chassis", baseResearchTimeMs: 45_000, effectKind: "structural", icon: "robot" },
-  { id: "better-fabs", prerequisiteId: null, baseResearchTimeMs: 30_000, effectKind: "perk", icon: "factory" },
-  { id: "lean-production", prerequisiteId: null, baseResearchTimeMs: 30_000, effectKind: "perk", icon: "factory" },
-  { id: "salvage-training", prerequisiteId: null, baseResearchTimeMs: 30_000, effectKind: "perk", icon: "scrap" },
-  { id: "rapid-capture", prerequisiteId: null, baseResearchTimeMs: 30_000, effectKind: "perk", icon: "capture" },
+  { id: "drone-chassis", prerequisiteId: null, baseResearchTimeMs: 30_000, effectKind: "structural", icon: "icons/skills/drone-chassis.png", name: "Drone Chassis", description: "Unlocks Advanced Drone research.", effectLive: true },
+  { id: "advanced-drone", prerequisiteId: "drone-chassis", baseResearchTimeMs: 45_000, effectKind: "structural", icon: "icons/skills/advanced-drone.png", name: "Advanced Drone", description: "Factories also build Drone Mk2: more health and damage.", effectLive: true },
+  { id: "robot-chassis", prerequisiteId: null, baseResearchTimeMs: 30_000, effectKind: "structural", icon: "icons/skills/robot-chassis.png", name: "Robot Chassis", description: "Unlocks Advanced Robot research.", effectLive: true },
+  { id: "advanced-robot", prerequisiteId: "robot-chassis", baseResearchTimeMs: 45_000, effectKind: "structural", icon: "icons/skills/advanced-robot.png", name: "Advanced Robot", description: "Factories also build Robot Mk2: more health and damage.", effectLive: true },
+  { id: "better-fabs", prerequisiteId: null, baseResearchTimeMs: 30_000, effectKind: "perk", icon: "icons/skills/better-fabs.png", name: "Better Fabs", description: "Factories produce units 1.5x faster.", effectLive: true },
+  { id: "lean-production", prerequisiteId: null, baseResearchTimeMs: 30_000, effectKind: "perk", icon: "icons/skills/lean-production.png", name: "Lean Production", description: "New factories cost half the scrap.", effectLive: true },
+  { id: "salvage-training", prerequisiteId: null, baseResearchTimeMs: 30_000, effectKind: "perk", icon: "icons/skills/salvage-training.png", name: "Salvage Training", description: "1.5x scrap from every kill.", effectLive: true },
+  { id: "rapid-capture", prerequisiteId: null, baseResearchTimeMs: 30_000, effectKind: "perk", icon: "icons/skills/rapid-capture.png", name: "Rapid Capture", description: "Capture suburbs 1.5x faster.", effectLive: false },
   // dataTransferSpeedMultiplier: no consumer yet (PLAN.md's disconnected/
   // connected TFLOPS-flow mechanic isn't implemented by any current issue) —
   // researchable and wired into the perk hook/schema, effect left as an
   // explicit note for whichever future issue implements TFLOPS flow
   // (issues/ANU-016.md's Done-when).
-  { id: "data-uplink", prerequisiteId: null, baseResearchTimeMs: 30_000, effectKind: "perk", icon: "uplink" },
+  { id: "data-uplink", prerequisiteId: null, baseResearchTimeMs: 30_000, effectKind: "perk", icon: "icons/skills/data-uplink.png", name: "Data Uplink", description: "1.5x data transfer speed for data centers.", effectLive: false },
 ];

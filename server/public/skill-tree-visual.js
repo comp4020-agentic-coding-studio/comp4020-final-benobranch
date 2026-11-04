@@ -33,6 +33,17 @@ import { SKILL_NODES } from "./skill-tree-nodes.js";
  *   AND no node (this one or another) is currently being researched — one
  *   active research slot per player. Mutually exclusive with `unlocked` and
  *   `researching`.
+ * @property {"prerequisite" | "busy" | null} lockedReason - why a node that
+ *   isn't unlocked/researching also isn't purchasable (ANU-029, so the
+ *   Research tab can say so): "prerequisite" if its prerequisite isn't
+ *   unlocked yet (takes precedence — it stays locked even once the research
+ *   slot frees up), else "busy" if another node holds the one research
+ *   slot. null whenever the node is unlocked, researching, or purchasable.
+ * @property {string} name
+ * @property {string} description
+ * @property {boolean} effectLive - see skill-tree-nodes.js.
+ * @property {string | null} prerequisiteId - lets the GUI nest a node under
+ *   its prerequisite.
  */
 
 /**
@@ -46,13 +57,22 @@ export function skillTreeVisual(playerState) {
     const isUnlocked = unlocked.has(def.id);
     const isResearching = def.id === researchingNodeId;
     const prerequisiteMet = def.prerequisiteId === null || unlocked.has(def.prerequisiteId);
+    const purchasable = !isUnlocked && !isResearching && prerequisiteMet && researchingNodeId === null;
+    /** @type {"prerequisite" | "busy" | null} */
+    let lockedReason = null;
+    if (!isUnlocked && !isResearching && !purchasable) lockedReason = prerequisiteMet ? "busy" : "prerequisite";
     return {
       id: def.id,
       icon: def.icon,
+      name: def.name,
+      description: def.description,
+      effectLive: def.effectLive,
+      prerequisiteId: def.prerequisiteId,
+      lockedReason,
       unlocked: isUnlocked,
       researching: isResearching,
       progressFraction: isResearching ? (playerState.researching?.progressFraction ?? 0) : null,
-      purchasable: !isUnlocked && !isResearching && prerequisiteMet && researchingNodeId === null,
+      purchasable,
     };
   });
   return { nodes };
