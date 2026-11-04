@@ -27,6 +27,7 @@ import { unitVisual } from "./unit-visual.js";
 import { factoryVisual } from "./factory-visual.js";
 import { DATA_CENTER_TIER_ICONS, DATA_CENTER_TIER_MARKER_SIZE } from "./data-center-visual.js";
 import { UNIT_ARCHETYPE_ICONS, UNIT_MARKER_SIZE } from "./unit-icon.js";
+import { PLAYER_BASE_ICON, PLAYER_BASE_MARKER_SIZE } from "./base-icon.js";
 
 /**
  * @typedef {{idx: number, sal_code: string, name: string, is_remainder: boolean}} MapSuburb
@@ -57,6 +58,7 @@ const svg = /** @type {SVGSVGElement} */ (/** @type {unknown} */ (document.getEl
 const suburbsLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-suburbs")));
 const dcLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-data-centers")));
 const spawnLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-spawns")));
+const basesLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-bases")));
 const unitsLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-units")));
 const factoriesLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-factories")));
 const tooltip = /** @type {HTMLElement} */ (document.getElementById("map-tooltip"));
@@ -254,6 +256,56 @@ export function renderOwnership(ownership, members) {
     } else {
       path.removeAttribute("style"); // back to the default .suburb/.suburb.remainder fill
     }
+  }
+}
+
+/**
+ * Populates #map-bases with one skull marker per player who still holds
+ * their kickoff spawn suburb (ANU-025) — a player's `spawnSalCode` is set
+ * once at kickoff and never changes, but the marker itself disappears the
+ * moment `ownership[spawnSalCode]` no longer equals that player, since this
+ * reads current ownership fresh on every call rather than caching whether
+ * the base was ever captured. Same full-redraw precedent as
+ * renderOwnership/renderUnits/renderFactories — called alongside
+ * renderOwnership since both depend on the same `ownership` broadcast.
+ * Decorative only (like `.dc-marker`/`.spawn-marker`): no dataset/click
+ * handling, since a base marker isn't a selectable game object.
+ * @param {Record<string, string>} ownership - sal_code -> owner playerId, sparse
+ * @param {PlayerPresence[]} members
+ */
+export function renderBases(ownership, members) {
+  basesLayer.replaceChildren();
+  const size = PLAYER_BASE_MARKER_SIZE;
+  for (const member of members) {
+    if (!member.spawnSalCode) continue; // lobby hasn't started, or no spawn-table entry for this lobby size
+    if (ownership[member.spawnSalCode] !== member.playerId) continue; // base captured by someone else — no marker
+    const geo = sal_codeToGeo.get(member.spawnSalCode);
+    if (!geo) continue;
+    const [x, y] = geo.label_point;
+
+    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    group.setAttribute("class", "base-marker");
+
+    const backdrop = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    backdrop.setAttribute("x", String(x - size / 2));
+    backdrop.setAttribute("y", String(y - size / 2));
+    backdrop.setAttribute("width", String(size));
+    backdrop.setAttribute("height", String(size));
+    backdrop.setAttribute("class", "base-marker__backdrop");
+    backdrop.setAttribute("style", `fill: ${member.color};`);
+
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "image");
+    icon.setAttribute("href", PLAYER_BASE_ICON);
+    icon.setAttribute("x", String(x - size / 2));
+    icon.setAttribute("y", String(y - size / 2));
+    icon.setAttribute("width", String(size));
+    icon.setAttribute("height", String(size));
+    icon.setAttribute("image-rendering", "pixelated");
+    icon.setAttribute("class", "base-marker__icon");
+
+    group.appendChild(backdrop);
+    group.appendChild(icon);
+    basesLayer.appendChild(group);
   }
 }
 

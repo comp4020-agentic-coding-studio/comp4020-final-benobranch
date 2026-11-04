@@ -17,7 +17,7 @@
 /** @typedef {import("../protocol.ts").OccupantUnit} OccupantUnit */
 /** @typedef {import("../protocol.ts").FactoryState} FactoryState */
 /** @typedef {import("../protocol.ts").UnitTypeCatalogEntry} UnitTypeCatalogEntry */
-import { mountMap, unmountMap, renderOwnership, renderUnits, renderFactories, setUnitCatalog } from "./map.js";
+import { mountMap, unmountMap, renderOwnership, renderBases, renderUnits, renderFactories, setUnitCatalog } from "./map.js";
 import { mountSidebar, unmountSidebar, updateSidebarState, selectFromMap } from "./sidebar.js";
 
 const TOKEN_KEY = "infrastructure-siege:token";
@@ -241,6 +241,7 @@ function renderLobbyScreen(/** @type {LobbyState} */ lobby) {
     // isn't guaranteed to be a valid spawn-table key on its own.
     mountMap(lobby.lobbyId, Math.max(4, Math.min(12, lobby.members.length)), (selection) => selectFromMap(selection));
     renderOwnership(lobby.ownership, lobby.members);
+    renderBases(lobby.ownership, lobby.members);
     renderUnits(occupancy, lobby.members);
     renderFactories(factories, lobby.members);
     if (!sidebarMounted) {

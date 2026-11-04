@@ -32,6 +32,13 @@ export function createTerritory(db: DatabaseSync): Territory {
   const selectOwnership = db.prepare(
     "SELECT sal_code AS salCode, owner_player_id AS ownerPlayerId FROM suburb_ownership WHERE lobby_id = ? AND owner_player_id IS NOT NULL",
   );
+  // ANU-025: records each player's kickoff spawn suburb separately from
+  // suburb_ownership (which mutates on every later capture) — this is what
+  // lets a player's base marker disappear once that suburb changes hands,
+  // rather than silently tracking wherever they currently hold territory.
+  const setSpawnSalCode = db.prepare(
+    "UPDATE lobby_members SET spawn_sal_code = ? WHERE lobby_id = ? AND player_id = ?",
+  );
 
   return {
     assignSpawnOwnership(lobbyId, memberPlayerIds) {
@@ -43,6 +50,7 @@ export function createTerritory(db: DatabaseSync): Territory {
       const assignable = Math.min(spawnSalCodes.length, memberPlayerIds.length);
       for (let i = 0; i < assignable; i++) {
         upsertOwner.run(lobbyId, spawnSalCodes[i], memberPlayerIds[i]);
+        setSpawnSalCode.run(spawnSalCodes[i], lobbyId, memberPlayerIds[i]);
       }
     },
 
