@@ -18,7 +18,7 @@
 /** @typedef {import("../protocol.ts").FactoryState} FactoryState */
 /** @typedef {import("../protocol.ts").UnitTypeCatalogEntry} UnitTypeCatalogEntry */
 import { mountMap, unmountMap, renderOwnership, renderBases, renderUnits, renderFactories, setUnitCatalog } from "./map.js";
-import { mountSidebar, unmountSidebar, updateSidebarState, selectFromMap } from "./sidebar.js";
+import { mountSidebar, unmountSidebar, updateSidebarState, selectFromMap, showSidebarError } from "./sidebar.js";
 
 const TOKEN_KEY = "infrastructure-siege:token";
 const LAST_CALLSIGN_KEY = "infrastructure-siege:last-callsign";
@@ -125,6 +125,8 @@ let factories = [];
 /** @type {UnitTypeCatalogEntry[]} */
 let unitCatalog = [];
 let economy = { scrap: 0, tflops: 0 };
+/** @type {import("./sidebar.js").SkillTreeState | null} ANU-029: this player's latest `skillTree` message. */
+let skillTree = null;
 let sidebarMounted = false;
 
 function setStatus(/** @type {"connecting" | "connected" | "disconnected"} */ state) {
@@ -150,7 +152,7 @@ function send(/** @type {Record<string, unknown>} */ message) {
 // changes, but only once the sidebar is actually mounted (a started lobby).
 function updateSidebar() {
   if (!sidebarMounted || !currentLobby || !myPlayerId) return;
-  updateSidebarState({ lobby: currentLobby, myPlayerId, occupancy, factories, unitCatalog, economy });
+  updateSidebarState({ lobby: currentLobby, myPlayerId, occupancy, factories, unitCatalog, economy, skillTree });
 }
 
 /** @returns {{ screen: "home" | "browse" | "lobby" | "options", lobbyId?: string }} */
@@ -254,6 +256,7 @@ function renderLobbyScreen(/** @type {LobbyState} */ lobby) {
     if (sidebarMounted) {
       unmountSidebar();
       sidebarMounted = false;
+      skillTree = null;
     }
   }
 
@@ -369,6 +372,12 @@ function handleMessage(/** @type {ServerMessage} */ msg) {
   } else if (msg.type === "economy") {
     economy = { scrap: msg.scrap, tflops: msg.tflops };
     updateSidebar();
+  } else if (msg.type === "skillTree") {
+    // Per-player on the server side already; the playerId check just guards
+    // against ever rendering someone else's tree.
+    if (msg.playerId !== myPlayerId) return;
+    skillTree = { unlockedNodeIds: msg.unlockedNodeIds, researching: msg.researching };
+    updateSidebar();
   } else if (msg.type === "nameRequired") {
     navigateOnNextLobbyState = false;
     showNamePrompt(msg.lobbyId);
@@ -377,6 +386,12 @@ function handleMessage(/** @type {ServerMessage} */ msg) {
       // Failed after the player chose a callsign (e.g. it was taken, or the
       // lobby filled/started in the gap) — stay on the prompt and say why.
       showError(namePromptErrorEl, msg.message);
+    } else if (sidebarMounted) {
+      // ANU-029: in a started game, an error is a rejected action
+      // (startResearch, attackSuburb, buildFactory...) — show it in the
+      // sidebar. Falling through to the Browse redirect below would kick
+      // the player out of the game they're in.
+      showSidebarError(msg.message);
     } else {
       // Failed on a plain join attempt (full/started/gone) — back to
       // Browse, which is where that attempt was made from.

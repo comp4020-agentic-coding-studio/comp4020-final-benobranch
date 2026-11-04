@@ -3,6 +3,7 @@
 // representation" bullet, redesigned by ANU-019's time-gated research), not
 // a rendered screenshot, per CLAUDE.md's current no-manual-e2e rule. Same
 // pattern as spec/factory-visual.test.ts / spec/unit-visual.test.ts.
+import { existsSync } from "node:fs";
 import { expect, it } from "vitest";
 import { skillTreeVisual } from "../server/public/skill-tree-visual.js";
 import { SKILL_NODES } from "../server/public/skill-tree-nodes.js";
@@ -67,5 +68,52 @@ it("output covers every defined node exactly once, carrying its icon through", (
   expect(new Set(nodes.map((n) => n.id))).toEqual(new Set(SKILL_NODES.map((n) => n.id)));
   for (const def of SKILL_NODES) {
     expect(nodes.find((n) => n.id === def.id)!.icon).toBe(def.icon);
+  }
+});
+
+// ANU-029: the Research tab's display fields.
+it("lockedReason is 'prerequisite' when the prerequisite is missing, even while another node is researching", () => {
+  const researching = { nodeId: "better-fabs", startedAt: new Date().toISOString(), progressFraction: 0.2 };
+  for (const state of [{ unlockedNodeIds: [], researching: null }, { unlockedNodeIds: [], researching }]) {
+    const node = skillTreeVisual(state).nodes.find((n) => n.id === "advanced-robot")!;
+    expect(node.lockedReason).toBe("prerequisite");
+  }
+});
+
+it("lockedReason is 'busy' for a prereq-met node while another node holds the research slot", () => {
+  const researching = { nodeId: "better-fabs", startedAt: new Date().toISOString(), progressFraction: 0.2 };
+  const { nodes } = skillTreeVisual({ unlockedNodeIds: [], researching });
+  expect(nodes.find((n) => n.id === "salvage-training")!.lockedReason).toBe("busy");
+});
+
+it("lockedReason is null for unlocked, researching and purchasable nodes", () => {
+  const researching = { nodeId: "advanced-drone", startedAt: new Date().toISOString(), progressFraction: 0.5 };
+  const withSlotBusy = skillTreeVisual({ unlockedNodeIds: ["drone-chassis"], researching }).nodes;
+  expect(withSlotBusy.find((n) => n.id === "drone-chassis")!.lockedReason).toBeNull(); // unlocked
+  expect(withSlotBusy.find((n) => n.id === "advanced-drone")!.lockedReason).toBeNull(); // researching
+  const idle = skillTreeVisual({ unlockedNodeIds: [], researching: null }).nodes;
+  expect(idle.find((n) => n.id === "better-fabs")!.lockedReason).toBeNull(); // purchasable
+});
+
+it("carries each node's display name, description, effectLive and prerequisiteId through", () => {
+  const { nodes } = skillTreeVisual({ unlockedNodeIds: [], researching: null });
+  for (const def of SKILL_NODES) {
+    const node = nodes.find((n) => n.id === def.id)!;
+    expect(node.name).toBe(def.name);
+    expect(node.name.length).toBeGreaterThan(0);
+    expect(node.description.length).toBeGreaterThan(0);
+    expect(node.effectLive).toBe(def.effectLive);
+    expect(node.prerequisiteId).toBe(def.prerequisiteId);
+  }
+});
+
+it("data-uplink is flagged as having no effect yet (its multiplier has no reader)", () => {
+  expect(SKILL_NODES.find((n) => n.id === "data-uplink")!.effectLive).toBe(false);
+});
+
+it("every node's icon (and the researching icon) is a real file under server/public/", () => {
+  const publicDir = new URL("../server/public/", import.meta.url);
+  for (const path of [...SKILL_NODES.map((n) => n.icon), "icons/skills/researching.png"]) {
+    expect(existsSync(new URL(path, publicDir)), path).toBe(true);
   }
 });

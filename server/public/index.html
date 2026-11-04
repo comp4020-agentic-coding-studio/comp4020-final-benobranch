@@ -126,6 +126,7 @@
           <button type="button" class="sidebar-tab" data-panel="territory" aria-current="true">Territory</button>
           <button type="button" class="sidebar-tab" data-panel="units">Units</button>
           <button type="button" class="sidebar-tab" data-panel="factories">Factories</button>
+          <button type="button" class="sidebar-tab" data-panel="research">Research</button>
         </nav>
         <p id="sidebar-economy" class="sidebar-economy" hidden>
           <span class="sidebar-economy__item"><span id="sidebar-scrap">0</span> scrap</span>
@@ -146,6 +147,13 @@
         <section id="panel-factories" class="sidebar-panel" hidden>
           <h2>Your factories</h2>
           <ul id="factory-list" class="roster-list"></ul>
+        </section>
+
+        <!-- ANU-029: skill tree. Research is free; held data centers' TFLOPS speed it up. One node at a time. -->
+        <section id="panel-research" class="sidebar-panel" hidden>
+          <h2>Research</h2>
+          <p class="subtle skill-tree__hint">One project at a time. More TFLOPS = faster research.</p>
+          <ul id="skill-tree-list" class="roster-list skill-tree"></ul>
         </section>
       </aside>
     </main>

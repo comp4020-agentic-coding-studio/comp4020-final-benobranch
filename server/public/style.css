@@ -526,3 +526,126 @@ button:not(:disabled):hover {
   height: 100%;
   background: var(--accent);
 }
+
+/* ANU-029: Research tab (skill tree). Cards reuse .roster-list li; a node
+   with a prerequisite sits indented under its parent with a connector. */
+/* Four tabs now share the 320px sidebar — trim side padding so "Territory"
+   and "Factories" still fit on one line. */
+.sidebar-tab {
+  min-width: 0;
+  padding-inline: 0.2rem;
+}
+
+.sidebar-error {
+  margin: 0;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.8rem;
+  color: #ffd9d5;
+  background: color-mix(in srgb, var(--danger) 25%, var(--bg));
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+}
+
+.sidebar-error[hidden] {
+  display: none;
+}
+
+.skill-tree__hint {
+  margin: -0.4rem 0 0;
+  font-size: 0.78rem;
+}
+
+.skill-tree li.skill-node {
+  position: relative;
+  gap: 0.4rem;
+}
+
+.skill-tree li.skill-node--child {
+  margin-left: 1.25rem;
+}
+
+.skill-tree li.skill-node--child::before {
+  content: "";
+  position: absolute;
+  left: -0.85rem;
+  top: -0.45rem;
+  width: 0.7rem;
+  height: calc(0.45rem + 22px);
+  border-left: 1px solid var(--accent-dim);
+  border-bottom: 1px solid var(--accent-dim);
+}
+
+.skill-node__header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.skill-node__icon,
+.skill-node__progress-icon {
+  image-rendering: pixelated;
+  flex: 0 0 auto;
+}
+
+.skill-node__progress-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.skill-node__text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.skill-node__name {
+  color: var(--text);
+}
+
+.skill-node__description,
+.skill-node__locked-reason,
+.skill-node__note {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  margin: 0;
+}
+
+.skill-node__note {
+  font-style: italic;
+}
+
+.skill-node__badge {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  color: var(--accent);
+}
+
+.skill-node__pct {
+  flex: 0 0 auto;
+  min-width: 2.5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.skill-node__research {
+  font-size: 0.85rem;
+  padding: 0.4rem 0.6rem;
+}
+
+.skill-tree li.skill-node--unlocked {
+  border-color: var(--accent-dim);
+}
+
+.skill-tree li.skill-node--researching {
+  border-color: var(--accent);
+}
+
+.skill-tree li.skill-node--locked .skill-node__icon {
+  opacity: 0.35;
+}
+
+.skill-tree li.skill-node--locked .skill-node__name {
+  color: var(--text-dim);
+}
