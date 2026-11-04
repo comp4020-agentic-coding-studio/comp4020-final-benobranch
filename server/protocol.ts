@@ -109,25 +109,15 @@ export interface ClientBuildFactory {
    * owns — the first factory per player is placed automatically at kickoff
    * (server/factories.ts's spawnFactories); this is for every one after
    * that. Costs a flat scrap amount (server/factories.ts's
-   * FACTORY_BUILD_COST_SCRAP), no adjacency-to-an-existing-factory
+   * FACTORY_BUILD_COST_SCRAP, scaled by the factoryBuildCostMultiplier perk
+   * hook as of ANU-022 — see that issue's Resolution for why: scrap no
+   * longer funds individual units, only new factories, so that's the node
+   * this multiplier now cheapens), no adjacency-to-an-existing-factory
    * restriction (confirmed with the user via AskUserQuestion — see
    * issues/ANU-015.md's Resolution).
    */
   type: "buildFactory";
   sal_code: string;
-}
-
-export interface ClientQueueUnit {
-  /**
-   * Queues a unit build at a factory the sender owns (ANU-015). One build
-   * at a time per factory — rejected with "busy" if the factory already has
-   * something queued. Costs scrap (unit_types.build_cost_scrap, scaled by
-   * the factoryBuildCostMultiplier perk hook) deducted synchronously
-   * against the sender's balance.
-   */
-  type: "queueUnit";
-  factoryId: string;
-  unitTypeKey: string;
 }
 
 export interface ClientPurchaseNode {
@@ -153,7 +143,6 @@ export type ClientMessage =
   | ClientMoveUnit
   | ClientAttackSuburb
   | ClientBuildFactory
-  | ClientQueueUnit
   | ClientPurchaseNode;
 
 export interface PlayerPresence {
@@ -201,13 +190,24 @@ export interface ServerOccupancy {
   units: OccupantUnit[];
 }
 
+/**
+ * One buildable unit type's independent auto-production cycle at a factory
+ * (ANU-022) — every buildable type (base roster plus any
+ * `requires_skill_node` variant the factory's owner has unlocked) cycles
+ * concurrently, not one queued type at a time, so this is an array on
+ * FactoryState rather than the single `queuedUnitTypeKey` slot it replaces.
+ */
+export interface FactoryProductionCycle {
+  unitTypeKey: string;
+  /** 0 (cycle just started) to 1 (about to complete) — see server/factories.ts. */
+  progressFraction: number;
+}
+
 export interface FactoryState {
   id: string;
   sal_code: string;
   ownerPlayerId: string;
-  queuedUnitTypeKey: string | null;
-  /** 0 (just queued) to 1 (about to complete); null while idle — see server/factories.ts. */
-  queueProgressFraction: number | null;
+  production: FactoryProductionCycle[];
 }
 
 export interface ServerFactories {
@@ -220,16 +220,17 @@ export interface UnitTypeCatalogEntry {
   key: string;
   health: number;
   damage: number;
-  buildCostScrap: number;
+  /** Scrap credited to whoever destroys a unit of this type (server/units.ts's attackSuburb) — no longer a build cost; units are auto-produced, not bought (ANU-022). */
+  scrapValue: number;
   buildTimeMs: number;
   movementMode: "fly" | "ground";
-  /** Non-null for an ANU-016 skill-tree-gated variant — the GUI doesn't offer it until that node is unlocked. */
+  /** Non-null for an ANU-016 skill-tree-gated variant — a factory only auto-produces it once its owner has unlocked that node (server/factories.ts). */
   requiresSkillNode: string | null;
 }
 
 /**
  * Global reference data (ANU-020) — every `unit_types` row, so the GUI's
- * build buttons show real costs/stats instead of hardcoding values that
+ * roster/combat displays show real stats instead of hardcoding values that
  * could drift from server/units.ts's seedBaseUnitTypes. Not lobby-scoped;
  * sent once per connection right after `welcome`.
  */
@@ -476,17 +477,6 @@ export function parseClientMessage(raw: string): ClientMessage {
       throw new Error("'buildFactory' requires a non-empty 'sal_code'");
     }
     return { type: "buildFactory", sal_code };
-  }
-
-  if (type === "queueUnit") {
-    const { factoryId, unitTypeKey } = data as Partial<ClientQueueUnit>;
-    if (!isNonEmptyString(factoryId, MAX_UNIT_ID_LENGTH)) {
-      throw new Error("'queueUnit' requires a non-empty 'factoryId'");
-    }
-    if (!isNonEmptyString(unitTypeKey, MAX_UNIT_TYPE_KEY_LENGTH)) {
-      throw new Error("'queueUnit' requires a non-empty 'unitTypeKey'");
-    }
-    return { type: "queueUnit", factoryId, unitTypeKey };
   }
 
   if (type === "purchaseNode") {

@@ -557,4 +557,88 @@ function migrate(db: DatabaseSync): void {
       throw err;
     }
   }
+
+  // v6 (ANU-022): units are no longer scrap-queued one-at-a-time — every
+  // factory auto-produces every buildable unit_types row concurrently, each
+  // on its own stored-timestamp cycle (ADR 0001's rule, same as the single
+  // queue this replaces). `factories`' single queue slot
+  // (queued_unit_type_key/queue_started_at) can't represent "building
+  // several types at once", so it's replaced by a child table keyed per
+  // (factory, unit type) — see server/factories.ts's `createFactoryProduction`
+  // table.
+  if (version < 6) {
+    db.exec("BEGIN");
+    try {
+      // Existing factories' in-flight single-queue build has no equivalent
+      // in the new per-type-cycle model (it was "the one type the player
+      // picked", not "every type always cycling") — simplest correct
+      // carry-forward is to start every existing factory's cycle for every
+      // currently-unlocked unit type fresh from this migration's instant,
+      // rather than inventing a conversion from the old partial progress.
+      // factories.ts's settle() lazily inserts a row for any (factory, type)
+      // pair it finds missing anyway, so this backfill (further down) is an
+      // optimization (existing factories start producing immediately)
+      // rather than a correctness requirement for ones created after this
+      // version. Read the id list now, before factories is rebuilt below.
+      const existingFactoryIds = db.prepare("SELECT id FROM factories").all() as { id: string }[];
+      const baseUnitTypeKeys = db
+        .prepare("SELECT key FROM unit_types WHERE requires_skill_node IS NULL")
+        .all() as { key: string }[];
+
+      // Rebuilt via a new table + copy rather than two `ALTER TABLE ...
+      // DROP COLUMN` statements: SQLite's DROP COLUMN rewrites the stored
+      // CREATE TABLE text, and when the column immediately follows a `--`
+      // inline comment (as both of these do — see the v5 migration's
+      // `factories` DDL above) that rewrite corrupts the schema ("incomplete
+      // input" on the very next ALTER/read) — a real engine limitation, not
+      // a mistake in these statements. A table rebuild sidesteps it entirely.
+      // This has to run BEFORE factory_production is created below: once
+      // that table's rows FK-reference factories(id), DROP TABLE factories
+      // fails the foreign-key check, even inside the same transaction.
+      db.exec(`
+        CREATE TABLE factories_new (
+          id TEXT PRIMARY KEY,
+          lobby_id TEXT NOT NULL REFERENCES lobbies(id),
+          sal_code TEXT NOT NULL,
+          owner_player_id TEXT NOT NULL REFERENCES players(player_id)
+        )
+      `);
+      db.exec(
+        "INSERT INTO factories_new (id, lobby_id, sal_code, owner_player_id) SELECT id, lobby_id, sal_code, owner_player_id FROM factories",
+      );
+      db.exec("DROP TABLE factories");
+      db.exec("ALTER TABLE factories_new RENAME TO factories");
+
+      db.exec(`
+        CREATE TABLE factory_production (
+          factory_id TEXT NOT NULL REFERENCES factories(id),
+          unit_type_key TEXT NOT NULL REFERENCES unit_types(key),
+          cycle_started_at TEXT NOT NULL,
+          PRIMARY KEY (factory_id, unit_type_key)
+        )
+      `);
+      const insertCycle = db.prepare(
+        "INSERT OR IGNORE INTO factory_production (factory_id, unit_type_key, cycle_started_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+      );
+      for (const { id: factoryId } of existingFactoryIds) {
+        for (const { key } of baseUnitTypeKeys) insertCycle.run(factoryId, key);
+      }
+
+      // unit_types.build_cost_scrap no longer gates a build (scrap now only
+      // funds buildFactory, a flat constant in server/factories.ts, not a
+      // per-unit-type cost) — but server/units.ts's attackSuburb still
+      // credits the attacker this same amount on a kill (PLAN.md: scrap is
+      // "earned by destroying enemy units"), independent of what building a
+      // unit costs. Renamed rather than dropped-and-recreated, so existing
+      // seeded values survive the migration unchanged, and so its new name
+      // doesn't read as a leftover build-cost field.
+      db.exec("ALTER TABLE unit_types RENAME COLUMN build_cost_scrap TO scrap_value");
+
+      db.exec("PRAGMA user_version = 6");
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+  }
 }

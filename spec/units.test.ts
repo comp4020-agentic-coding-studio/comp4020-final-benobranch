@@ -194,7 +194,7 @@ it("a kill destroys the defender, credits scrap scaled by scrapPerKillMultiplier
   expect(result.ok).toBe(true);
   if (!result.ok || result.outcome !== "kill") throw new Error(`expected a 'kill' outcome, got ${JSON.stringify(result)}`);
 
-  // Drone build_cost_scrap is seeded at 2 (seedBaseUnitTypes); x2 multiplier = 4.
+  // Drone scrap_value is seeded at 2 (seedBaseUnitTypes); x2 multiplier = 4.
   expect(result.scrapCredited).toBe(4);
   expect(result.attacker.sal_code).toBe(ADJACENT_SAL_CODE);
 

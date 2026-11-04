@@ -5,6 +5,10 @@
 // itself does document.getElementById at module top level, same as
 // map.js/app.js, so it can't be imported outside a real DOM — the pure
 // logic lives in suburb-detail-view.js specifically so it can be.)
+//
+// ANU-022 removed canQueueUnit (a factory auto-produces on a timer, no
+// player-picked queue to gate) — these cases now only check canBuildFactory
+// and that `factory`/`production` pass through unchanged.
 import { expect, it } from "vitest";
 import { suburbDetailViewModel } from "../server/public/suburb-detail-view.js";
 
@@ -30,7 +34,6 @@ it("an unowned suburb with no occupants reports a null owner and no actions", ()
   expect(detail.occupants).toEqual([]);
   expect(detail.factory).toBeNull();
   expect(detail.canBuildFactory).toBe(false);
-  expect(detail.canQueueUnit).toBe(false);
 });
 
 it("a suburb I own with no factory offers canBuildFactory", () => {
@@ -45,11 +48,10 @@ it("a suburb I own with no factory offers canBuildFactory", () => {
   expect(detail.ownerName).toBe("Alice");
   expect(detail.ownerColor).toBe("#30b319");
   expect(detail.canBuildFactory).toBe(true);
-  expect(detail.canQueueUnit).toBe(false);
 });
 
-it("a suburb I own with my own idle factory offers canQueueUnit, not canBuildFactory", () => {
-  const factory = { id: "f1", sal_code: "80001-0", ownerPlayerId: ME, queuedUnitTypeKey: null, queueProgressFraction: null };
+it("a suburb I own with my own factory does not offer canBuildFactory, and its production cycles pass through unchanged", () => {
+  const factory = { id: "f1", sal_code: "80001-0", ownerPlayerId: ME, production: [{ unitTypeKey: "drone", progressFraction: 0 }] };
   const detail = suburbDetailViewModel({
     sal_code: "80001-0",
     ownership: { "80001-0": ME },
@@ -59,25 +61,11 @@ it("a suburb I own with my own idle factory offers canQueueUnit, not canBuildFac
     myPlayerId: ME,
   });
   expect(detail.canBuildFactory).toBe(false);
-  expect(detail.canQueueUnit).toBe(true);
   expect(detail.factory).toEqual(factory);
 });
 
-it("a suburb I own with my own busy factory does not offer canQueueUnit", () => {
-  const factory = { id: "f1", sal_code: "80001-0", ownerPlayerId: ME, queuedUnitTypeKey: "drone", queueProgressFraction: 0.5 };
-  const detail = suburbDetailViewModel({
-    sal_code: "80001-0",
-    ownership: { "80001-0": ME },
-    occupancy: [],
-    factories: [factory],
-    members: MEMBERS,
-    myPlayerId: ME,
-  });
-  expect(detail.canQueueUnit).toBe(false);
-});
-
-it("an enemy-owned suburb with an enemy factory offers neither build nor queue action to me", () => {
-  const factory = { id: "f1", sal_code: "80001-0", ownerPlayerId: THEM, queuedUnitTypeKey: null, queueProgressFraction: null };
+it("an enemy-owned suburb with an enemy factory offers no build action to me", () => {
+  const factory = { id: "f1", sal_code: "80001-0", ownerPlayerId: THEM, production: [] };
   const detail = suburbDetailViewModel({
     sal_code: "80001-0",
     ownership: { "80001-0": THEM },
@@ -88,7 +76,6 @@ it("an enemy-owned suburb with an enemy factory offers neither build nor queue a
   });
   expect(detail.ownerName).toBe("Bob");
   expect(detail.canBuildFactory).toBe(false);
-  expect(detail.canQueueUnit).toBe(false);
 });
 
 it("sendableUnits is filtered to only the viewing player's own units, regardless of suburb", () => {
