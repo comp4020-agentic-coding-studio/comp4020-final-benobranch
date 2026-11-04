@@ -130,6 +130,18 @@ export interface ClientQueueUnit {
   unitTypeKey: string;
 }
 
+export interface ClientPurchaseNode {
+  /**
+   * Unlocks a skill-tree node (ANU-016), costing TFLOPS (not scrap — the
+   * skill tree is funded by the compute resource; see PLAN.md's "Two
+   * resources" section). Rejected if the node's prerequisite (if any) isn't
+   * already unlocked, if it's already unlocked, or if the sender's TFLOPS
+   * balance is insufficient — see server/skill-tree.ts.
+   */
+  type: "purchaseNode";
+  nodeId: string;
+}
+
 export type ClientMessage =
   | ClientHello
   | ClientCreateLobby
@@ -141,7 +153,8 @@ export type ClientMessage =
   | ClientMoveUnit
   | ClientAttackSuburb
   | ClientBuildFactory
-  | ClientQueueUnit;
+  | ClientQueueUnit
+  | ClientPurchaseNode;
 
 export interface PlayerPresence {
   playerId: string;
@@ -236,6 +249,25 @@ export interface ServerEconomy {
   tflops: number;
 }
 
+export interface ServerSkillTree {
+  /**
+   * The purchasing player's current unlocked-node set, resulting perk
+   * multipliers, and remaining TFLOPS balance (ANU-016) — the balance is
+   * included so the client-side skillTreeVisual pure function (which needs
+   * both the unlocked set and the current TFLOPS balance to compute which
+   * nodes are "purchasable") can be fed directly from this one message.
+   * Broadcast only to the purchaser — other players' skill trees are
+   * independent (server/skill-tree.ts is per-player, not shared within a
+   * lobby), unlike ServerOccupancy/ServerFactories which are lobby-wide
+   * since ownership/factories are visible to everyone.
+   */
+  type: "skillTree";
+  playerId: string;
+  unlockedNodeIds: string[];
+  multipliers: import("./perks.ts").PerkMultipliers;
+  tflops: number;
+}
+
 export interface LobbySummary {
   lobbyId: string;
   name: string;
@@ -293,7 +325,8 @@ export type ServerMessage =
   | ServerOccupancy
   | ServerFactories
   | ServerUnitCatalog
-  | ServerEconomy;
+  | ServerEconomy
+  | ServerSkillTree;
 
 const MAX_NAME_LENGTH = 40;
 const MAX_TOKEN_LENGTH = 100;
@@ -301,6 +334,7 @@ const MAX_LOBBY_ID_LENGTH = 64;
 const MAX_SAL_CODE_LENGTH = 16;
 const MAX_UNIT_TYPE_KEY_LENGTH = 32;
 const MAX_UNIT_ID_LENGTH = 64;
+const MAX_NODE_ID_LENGTH = 32;
 // PLAN.md "Players & spawn balance" (settled by ANU-006): games are 4-12
 // players, minimum 4 to start. Tightened from ANU-008's placeholder 2-16
 // range now that the real rule has landed.
@@ -453,6 +487,14 @@ export function parseClientMessage(raw: string): ClientMessage {
       throw new Error("'queueUnit' requires a non-empty 'unitTypeKey'");
     }
     return { type: "queueUnit", factoryId, unitTypeKey };
+  }
+
+  if (type === "purchaseNode") {
+    const { nodeId } = data as Partial<ClientPurchaseNode>;
+    if (!isNonEmptyString(nodeId, MAX_NODE_ID_LENGTH)) {
+      throw new Error("'purchaseNode' requires a non-empty 'nodeId'");
+    }
+    return { type: "purchaseNode", nodeId };
   }
 
   throw new Error(`unknown message type: ${String(type)}`);

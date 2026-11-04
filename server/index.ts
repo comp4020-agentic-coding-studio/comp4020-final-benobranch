@@ -9,6 +9,7 @@ import { openStore, type StoredLobby } from "./store.ts";
 import { createTerritory } from "./territory.ts";
 import { createUnits, listUnitTypes } from "./units.ts";
 import { createFactories } from "./factories.ts";
+import { createSkillTree } from "./skill-tree.ts";
 import { elapsedMs } from "./time.ts";
 import { renderReadmePage } from "./readme-page.ts";
 import { serveStatic } from "./static-files.ts";
@@ -31,6 +32,7 @@ const store = openStore(`${DATA_DIR}/game.db`);
 const territory = createTerritory(store.db);
 const units = createUnits(store.db);
 const factories = createFactories(store.db, units);
+const skillTree = createSkillTree(store.db);
 
 interface ConnMeta {
   playerId: string;
@@ -258,6 +260,15 @@ wss.on("connection", (socket) => {
       if (lobbyId) send(socket, { type: "occupancy", lobbyId, units: units.getOccupancy(lobbyId) });
       if (lobbyId) send(socket, { type: "factories", lobbyId, factories: factories.getFactories(lobbyId) });
       if (lobbyId) sendEconomyToPlayer(lobbyId, playerId);
+      if (lobbyId) {
+        send(socket, {
+          type: "skillTree",
+          playerId,
+          unlockedNodeIds: skillTree.getUnlockedNodeIds(lobbyId, playerId),
+          multipliers: store.perks.getPerkMultipliers(lobbyId, playerId),
+          tflops: store.getMemberEconomy(lobbyId, playerId)?.tflops ?? 0,
+        });
+      }
       if (lobbyId) broadcastLobbyState(lobbyId); // this player's online status just changed
       return;
     }
@@ -368,6 +379,30 @@ wss.on("connection", (socket) => {
       }
       broadcastFactories(meta.lobbyId);
       sendEconomyToPlayer(meta.lobbyId, meta.playerId); // deducted the unit's build cost
+      return;
+    }
+
+    if (message.type === "purchaseNode") {
+      if (!meta.lobbyId || !store.getLobby(meta.lobbyId)?.started) return;
+      const result = skillTree.purchaseNode(meta.lobbyId, meta.playerId, message.nodeId);
+      if (!result.ok) {
+        send(socket, { type: "error", message: `purchaseNode: ${result.reason}` });
+        return;
+      }
+      // Per-player, not lobby-wide (server/skill-tree.ts is per-player
+      // state) — only the purchasing player's own sockets need the result.
+      const tflops = store.getMemberEconomy(meta.lobbyId, meta.playerId)?.tflops ?? 0;
+      for (const [otherSocket, otherMeta] of sockets) {
+        if (otherMeta.playerId === meta.playerId) {
+          send(otherSocket, {
+            type: "skillTree",
+            playerId: meta.playerId,
+            unlockedNodeIds: result.unlockedNodeIds,
+            multipliers: result.multipliers,
+            tflops,
+          });
+        }
+      }
       return;
     }
 

@@ -18,6 +18,21 @@
  */
 
 /**
+ * unitTypeKey -> archetype icon. Covers the base roster (server/units.ts's
+ * seedBaseUnitTypes) and ANU-016's skill-tree-gated "mk2" variants
+ * (server/skill-tree.ts's seedSkillGatedUnitTypes) — an advanced variant is
+ * a stat upgrade on the same chassis, not a new archetype, so it renders
+ * with the same icon as its base unit rather than needing its own.
+ * @type {Record<string, "drone" | "robot">}
+ */
+const ARCHETYPE_BY_UNIT_TYPE_KEY = {
+  drone: "drone",
+  "drone-mk2": "drone",
+  robot: "robot",
+  "robot-mk2": "robot",
+};
+
+/**
  * @param {OccupantUnit} unit
  * @param {number} maxHealth - the unit type's base health (server/units.ts
  *   seedBaseUnitTypes), needed since OccupantUnit only carries current
@@ -25,19 +40,20 @@
  * @returns {UnitVisual}
  */
 export function unitVisual(unit, maxHealth) {
-  if (unit.unitTypeKey !== "drone" && unit.unitTypeKey !== "robot") {
+  const archetype = ARCHETYPE_BY_UNIT_TYPE_KEY[unit.unitTypeKey];
+  if (!archetype) {
     throw new Error(`unitVisual: unknown unit type '${unit.unitTypeKey}'`);
   }
   return {
-    icon: unit.unitTypeKey,
-    // Only a drone can be mid-flight over territory it doesn't own (robots'
-    // moves are adjacency-restricted, so they're never airborne between
-    // suburbs) — see OccupantUnit's destinationSalCode/moveStartedAt in
-    // server/protocol.ts. Nothing sets those fields yet (moves are instant
-    // as of this issue; see issues/ANU-014.md Resolution), so every unit
-    // currently renders "grounded" in practice — this branch exists for
-    // whichever future issue adds travel time.
-    state: unit.unitTypeKey === "drone" && unit.destinationSalCode ? "in-transit" : "grounded",
+    icon: archetype,
+    // Only a drone (base or mk2) can be mid-flight over territory it
+    // doesn't own (robots' moves are adjacency-restricted, so they're never
+    // airborne between suburbs) — see OccupantUnit's destinationSalCode/
+    // moveStartedAt in server/protocol.ts. Nothing sets those fields yet
+    // (moves are instant as of this issue; see issues/ANU-014.md
+    // Resolution), so every unit currently renders "grounded" in practice —
+    // this branch exists for whichever future issue adds travel time.
+    state: archetype === "drone" && unit.destinationSalCode ? "in-transit" : "grounded",
     healthFraction: maxHealth > 0 ? Math.max(0, Math.min(1, unit.health / maxHealth)) : 0,
   };
 }
