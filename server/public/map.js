@@ -25,6 +25,7 @@
 // nothing they touch resets the viewBox.
 import { unitVisual } from "./unit-visual.js";
 import { factoryVisual } from "./factory-visual.js";
+import { DATA_CENTER_TIER_ICONS, DATA_CENTER_TIER_MARKER_SIZE } from "./data-center-visual.js";
 
 /**
  * @typedef {{idx: number, sal_code: string, name: string, is_remainder: boolean}} MapSuburb
@@ -154,22 +155,25 @@ function initOnce(data, geometry) {
 
   // --- data center markers (fixed across lobby sizes) --- //
 
-  /** @type {Record<"mega"|"major"|"standard", number>} */
-  const MARKER_RADIUS = { mega: 450, major: 320, standard: 220 };
-
   for (const dc of data.data_centers) {
     const suburb = nameToSuburb.get(dc.name);
     if (!suburb) continue; // a data center name that doesn't resolve to a suburb is a data bug, not something to render around
     const geo = sal_codeToGeo.get(suburb.sal_code);
     if (!geo) continue;
     const [x, y] = geo.label_point;
-    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    circle.setAttribute("cx", String(x));
-    circle.setAttribute("cy", String(y));
-    circle.setAttribute("r", String(MARKER_RADIUS[dc.tier]));
-    circle.setAttribute("class", `dc-marker dc-marker--${dc.tier}`);
-    circle.dataset.salCode = suburb.sal_code;
-    dcLayer.appendChild(circle);
+    const size = DATA_CENTER_TIER_MARKER_SIZE[dc.tier];
+    const image = document.createElementNS("http://www.w3.org/2000/svg", "image");
+    image.setAttribute("href", DATA_CENTER_TIER_ICONS[dc.tier]);
+    image.setAttribute("x", String(x - size / 2));
+    image.setAttribute("y", String(y - size / 2));
+    image.setAttribute("width", String(size));
+    image.setAttribute("height", String(size));
+    // Source icons are 32x32 — let the browser scale them up without
+    // smoothing, same as any other pixel-art asset, instead of blurring.
+    image.setAttribute("image-rendering", "pixelated");
+    image.setAttribute("class", `dc-marker dc-marker--${dc.tier}`);
+    image.dataset.salCode = suburb.sal_code;
+    dcLayer.appendChild(image);
   }
 
   // --- attribution --- //
