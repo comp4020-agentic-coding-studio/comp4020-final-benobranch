@@ -133,7 +133,7 @@ let sidebarMounted = false;
 /** @type {SuburbCaptureState[]} */
 let captures = [];
 /** ANU-029: the `<action>: <reason>` errors server/index.ts sends for rejected in-game actions. */
-const IN_GAME_ACTION_ERROR = /^(placeUnit|moveUnit|attackSuburb|buildFactory|startResearch): /;
+const IN_GAME_ACTION_ERROR = /^(placeUnit|moveUnits|buildFactory|startResearch): /;
 
 function setStatus(/** @type {"connecting" | "connected" | "disconnected"} */ state) {
   statusEl.dataset.state = state;

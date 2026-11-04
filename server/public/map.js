@@ -41,6 +41,7 @@ import { zoneVisual } from "./capture-visual.js";
  * @typedef {{spawns: string[], min_sep: number, ratio: number, scores: number[]}} SpawnEntry
  * @typedef {{
  *   suburbs: MapSuburb[],
+ *   edges: {a: number, b: number, weight: number}[],
  *   data_centers: DataCenter[],
  *   spawn_table_by_lobby_size: Record<string, SpawnEntry>,
  *   source_attribution: Record<string, string>,
@@ -135,6 +136,51 @@ export function setUnitCatalog(unitTypes) {
   unitTypesByKey = new Map(unitTypes.map((t) => [t.key, t]));
 }
 
+/** @type {Map<string, Set<string>>} */
+let adjacency = new Map();
+
+/**
+ * Mirrors server/units.ts's own buildAdjacency/groundCanReach exactly (same
+ * map.json `edges`) so the ANU-027 "Move units" panel can grey out the
+ * robot row for an unreachable destination without a round trip — the
+ * server's own check in `moveUnits` stays authoritative; this is a client
+ * courtesy only, same precedent as every other client-side gate in this
+ * GUI (issues/ANU-013.md's Notes).
+ * @param {{a: number, b: number}[]} edges
+ * @param {MapSuburb[]} suburbs
+ */
+function buildAdjacency(edges, suburbs) {
+  const idxToSalCode = new Map(suburbs.map((s) => [s.idx, s.sal_code]));
+  const result = new Map();
+  for (const edge of edges) {
+    const a = idxToSalCode.get(edge.a);
+    const b = idxToSalCode.get(edge.b);
+    if (!a || !b) continue;
+    if (!result.has(a)) result.set(a, new Set());
+    if (!result.has(b)) result.set(b, new Set());
+    result.get(a).add(b);
+    result.get(b).add(a);
+  }
+  return result;
+}
+
+/**
+ * Whether a "ground" (robot) unit owned by a player who owns `ownedSalCodes`
+ * could reach `target` — owned, or road-adjacent to something owned, same
+ * rule as server/units.ts's groundCanReach.
+ * @param {ReadonlySet<string>} ownedSalCodes
+ * @param {string} target
+ */
+export function groundCanReachSuburb(ownedSalCodes, target) {
+  if (ownedSalCodes.has(target)) return true;
+  const neighbours = adjacency.get(target);
+  if (!neighbours) return false;
+  for (const n of neighbours) {
+    if (ownedSalCodes.has(n)) return true;
+  }
+  return false;
+}
+
 function cleanLabel(/** @type {string} */ name) {
   return name.replace(/ \(ACT\)$/, "").replace(/^ACT Remainder - (.+?)(?: \[part \d+\])?$/, "Wilderness: $1");
 }
@@ -154,6 +200,7 @@ function initOnce(data, geometry) {
   nameToSuburb = new Map(data.suburbs.map((s) => [s.name, s]));
   nameToDataCenter = new Map(data.data_centers.map((dc) => [dc.name, dc]));
   sal_codeToGeo = new Map(geometry.suburbs.map((g) => [g.sal_code, g]));
+  adjacency = buildAdjacency(data.edges, data.suburbs);
 
   // --- static suburb layer --- //
 

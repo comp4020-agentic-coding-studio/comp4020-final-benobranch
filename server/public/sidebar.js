@@ -7,13 +7,23 @@
 // and there's no bundler.
 //
 // GUI boundary (issues/ANU-013.md's Notes, overridden for units/factories
-// specifically per issues/ANU-020.md's Why): moveUnit/attackSuburb/
-// buildFactory get real controls here. No control exists for placeUnit (a
-// free-unit-anywhere primitive that predates the scrap economy), queueUnit
-// (removed by ANU-022 — units auto-produce on a timer, not a player-picked
-// queue; the factory panel now just shows read-only per-type progress), or
-// zone capture (out of scope). ANU-029 adds the Research tab: a real
+// specifically per issues/ANU-020.md's Why): moveUnits/buildFactory get real
+// controls here. No control exists for placeUnit (a free-unit-anywhere
+// primitive that predates the scrap economy), queueUnit (removed by
+// ANU-022 — units auto-produce on a timer, not a player-picked queue; the
+// factory panel now just shows read-only per-type progress), or zone
+// capture (out of scope). ANU-029 adds the Research tab: a real
 // startResearch control for the skill tree.
+//
+// ANU-027 replaces the old one-unit dropdown + "Send unit here" button with
+// a Risk-style flow: "Move units" opens a per-type quantity panel at the
+// selected (source) suburb, then the next suburb tap on the map is captured
+// as the destination (intercepted in selectFromMap below) rather than
+// re-selecting the Territory detail panel — `pendingMove` tracks this across
+// that gap. A non-owned destination needs an explicit window.confirm (no
+// existing modal component in this repo, and building one is out of scope);
+// an owned destination, or a re-confirmed drone-only order after a
+// robot-unreachable destination greys that row out, sends immediately.
 /** @typedef {import("../protocol.ts").PlayerPresence} PlayerPresence */
 /** @typedef {import("../protocol.ts").LobbyState} LobbyState */
 /** @typedef {import("../protocol.ts").OccupantUnit} OccupantUnit */
@@ -23,6 +33,7 @@
 import { suburbDetailViewModel } from "./suburb-detail-view.js";
 import { skillTreeVisual } from "./skill-tree-visual.js";
 import { SKILL_NODES } from "./skill-tree-nodes.js";
+import { groundCanReachSuburb } from "./map.js";
 export { suburbDetailViewModel };
 
 /**
@@ -83,6 +94,19 @@ let skillTreeSignature = "";
 /** @type {ReturnType<typeof setTimeout> | undefined} */
 let errorTimer;
 
+/**
+ * Non-null while the "Move units" quantity panel is open for a given
+ * source suburb — the map's next suburb tap (selectFromMap) is captured as
+ * the destination instead of updating the Territory detail panel (ANU-027).
+ * `counts` holds the player's current per-type quantity picks, clamped to
+ * `movableUnitGroups`' per-type cap; `robotsUnreachable` is set once a
+ * destination has actually been picked and found unreachable for ground
+ * units, which greys the robot row and keeps the panel open rather than
+ * sending immediately.
+ * @type {{ fromSalCode: string, counts: Record<string, number>, robotsUnreachable: boolean, toSalCode?: string } | null}
+ */
+let pendingMove = null;
+
 function unitTypeLabel(/** @type {string} */ key) {
   return key.charAt(0).toUpperCase() + key.slice(1);
 }
@@ -121,6 +145,147 @@ function buildProductionDisplay(production) {
     wrap.appendChild(row);
   }
   return wrap;
+}
+
+/**
+ * The ANU-027 "Move units" quantity panel for `fromSalCode`: one row per
+ * entry in `movableUnitGroups`, a number input plus -10/-5/+5/+10 steppers,
+ * each clamped to [0, that type's count]. `pendingMove.robotsUnreachable`
+ * (set once a destination has been picked and found unreachable for ground
+ * units) disables the robot row and forces its count to 0, per
+ * issues/ANU-027.md's "after destination click" rule.
+ * @param {import("./suburb-detail-view.js").MovableUnitGroup[]} movableUnitGroups
+ */
+function buildMovePanel(movableUnitGroups) {
+  const wrap = document.createElement("div");
+  wrap.className = "move-panel";
+
+  for (const group of movableUnitGroups) {
+    const row = document.createElement("div");
+    row.className = "move-panel__row";
+    const disabled = group.unitTypeKey === "robot" && pendingMove?.robotsUnreachable === true;
+    if (disabled && pendingMove) pendingMove.counts[group.unitTypeKey] = 0;
+    const current = pendingMove?.counts[group.unitTypeKey] ?? 0;
+
+    const label = document.createElement("span");
+    label.className = "move-panel__label";
+    label.textContent = `${unitTypeLabel(group.unitTypeKey)} (${group.count})`;
+    row.appendChild(label);
+
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "0";
+    input.max = String(group.count);
+    input.value = String(current);
+    input.disabled = disabled;
+    input.className = "move-panel__input";
+    input.addEventListener("input", () => {
+      if (!pendingMove) return;
+      const clamped = Math.max(0, Math.min(group.count, Math.trunc(Number(input.value)) || 0));
+      pendingMove.counts[group.unitTypeKey] = clamped;
+      input.value = String(clamped);
+    });
+    row.appendChild(input);
+
+    for (const delta of [-10, -5, 5, 10]) {
+      const step = document.createElement("button");
+      step.type = "button";
+      step.className = "move-panel__step";
+      step.textContent = delta > 0 ? `+${delta}` : String(delta);
+      step.disabled = disabled;
+      step.addEventListener("click", () => {
+        if (!pendingMove) return;
+        const next = Math.max(0, Math.min(group.count, (pendingMove.counts[group.unitTypeKey] ?? 0) + delta));
+        pendingMove.counts[group.unitTypeKey] = next;
+        input.value = String(next);
+      });
+      row.appendChild(step);
+    }
+
+    if (disabled) {
+      const note = document.createElement("span");
+      note.className = "move-panel__note";
+      note.textContent = "Can't reach that destination";
+      row.appendChild(note);
+    }
+
+    wrap.appendChild(row);
+  }
+
+  if (pendingMove?.robotsUnreachable && pendingMove.toSalCode) {
+    // Robots were greyed out by the destination just picked — the player
+    // adjusts drone-only counts here, then confirms explicitly rather than
+    // re-tapping the map (issues/ANU-027.md: "the panel stays open ... to
+    // confirm drone-only counts or cancel").
+    const toSalCode = pendingMove.toSalCode;
+    const send_ = document.createElement("button");
+    send_.type = "button";
+    send_.textContent = `Send to ${toSalCode}`;
+    send_.addEventListener("click", () => confirmAndSendPendingMove(toSalCode));
+    wrap.appendChild(send_);
+  } else {
+    const hint = document.createElement("p");
+    hint.className = "move-panel__hint";
+    hint.textContent = "Tap a destination suburb on the map.";
+    wrap.appendChild(hint);
+  }
+
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => {
+    pendingMove = null;
+    renderSuburbDetail();
+  });
+  wrap.appendChild(cancel);
+
+  return wrap;
+}
+
+/**
+ * Sends `pendingMove`'s current counts to `toSalCode`, prompting first if
+ * the destination isn't the player's own (ANU-027's misclick guard).
+ * @param {string} toSalCode
+ */
+function confirmAndSendPendingMove(toSalCode) {
+  if (!pendingMove || !currentState) return;
+  const { lobby, myPlayerId } = currentState;
+  const counts = Object.fromEntries(Object.entries(pendingMove.counts).filter(([, count]) => count > 0));
+  if (Object.keys(counts).length === 0) return; // nothing selected — stay open rather than send an empty order
+
+  const isOwnedByMe = lobby.ownership[toSalCode] === myPlayerId;
+  if (!isOwnedByMe && !window.confirm(`Confirm attack on ${toSalCode}?`)) return;
+
+  send({ type: "moveUnits", fromSalCode: pendingMove.fromSalCode, toSalCode, counts });
+  pendingMove = null;
+}
+
+/**
+ * Fired when a suburb is tapped on the map while the "Move units" panel is
+ * open (ANU-027) — the destination for `pendingMove`'s source/counts.
+ * Greys the robot row (and re-renders the still-open panel) the first time
+ * an unreachable-for-ground destination is picked, rather than sending
+ * immediately; a reachable destination (or a drone-only order against an
+ * unreachable one) sends right away, with a confirm prompt first if the
+ * destination isn't the player's own.
+ * @param {string} toSalCode
+ */
+function handleMoveDestinationPick(toSalCode) {
+  if (!pendingMove || !currentState) return;
+  const { lobby, myPlayerId } = currentState;
+  const owned = new Set(Object.entries(lobby.ownership).filter(([, owner]) => owner === myPlayerId).map(([sal]) => sal));
+  const robotCount = pendingMove.counts.robot ?? 0;
+  const robotsCanReach = owned.has(toSalCode) || groundCanReachSuburb(owned, toSalCode);
+
+  if (robotCount > 0 && !robotsCanReach) {
+    pendingMove.robotsUnreachable = true;
+    pendingMove.toSalCode = toSalCode;
+    renderSuburbDetail();
+    return;
+  }
+
+  confirmAndSendPendingMove(toSalCode);
+  renderSuburbDetail(); // reflects the cancel/send outcome (panel closed, or still open if the order was empty)
 }
 
 function renderSuburbDetail() {
@@ -177,20 +342,21 @@ function renderSuburbDetail() {
     }
   }
 
-  if (detail.sendableUnits.length > 0) {
-    const picker = document.createElement("select");
-    for (const unit of detail.sendableUnits) {
-      const option = document.createElement("option");
-      option.value = unit.id;
-      option.textContent = `${unitTypeLabel(unit.unitTypeKey)} @ ${unit.sal_code}`;
-      picker.appendChild(option);
-    }
-    const sendButton = document.createElement("button");
-    sendButton.type = "button";
-    sendButton.textContent = "Send unit here";
-    sendButton.addEventListener("click", () => send({ type: "attackSuburb", unitId: picker.value, sal_code }));
-    actions.appendChild(picker);
-    actions.appendChild(sendButton);
+  if (pendingMove && pendingMove.fromSalCode === sal_code) {
+    actions.appendChild(buildMovePanel(detail.movableUnitGroups));
+  } else if (detail.movableUnitGroups.length > 0) {
+    const moveButton = document.createElement("button");
+    moveButton.type = "button";
+    moveButton.textContent = "Move units";
+    moveButton.addEventListener("click", () => {
+      pendingMove = {
+        fromSalCode: sal_code,
+        counts: Object.fromEntries(detail.movableUnitGroups.map((g) => [g.unitTypeKey, 0])),
+        robotsUnreachable: false,
+      };
+      renderSuburbDetail();
+    });
+    actions.appendChild(moveButton);
   }
 
   suburbDetailEl.appendChild(actions);
@@ -422,9 +588,25 @@ export function updateSidebarState(state) {
  * Called by app.js from map.js's onSelect callback — a tap on a unit/
  * factory icon switches to the matching tab and highlights that row; a
  * suburb tap updates the Territory tab's detail section.
+ *
+ * ANU-027: while the "Move units" panel is open (`pendingMove` set), a tap
+ * on a DIFFERENT suburb is captured as that order's destination instead of
+ * changing the Territory selection — re-tapping the source suburb itself
+ * just keeps editing it (handled by renderSuburbDetail's own
+ * `pendingMove.fromSalCode === sal_code` check). Tapping a unit/factory
+ * icon, or deselecting, cancels the pending move — the player has
+ * navigated away from "pick a destination" mode.
  * @param {MapSelection} selection
  */
 export function selectFromMap(selection) {
+  if (pendingMove) {
+    if (selection?.type === "suburb" && selection.sal_code !== pendingMove.fromSalCode) {
+      handleMoveDestinationPick(selection.sal_code);
+      return;
+    }
+    if (selection?.type !== "suburb") pendingMove = null;
+  }
+
   currentSelection = selection;
   if (selection?.type === "unit") showTab("units");
   else if (selection?.type === "factory") showTab("factories");

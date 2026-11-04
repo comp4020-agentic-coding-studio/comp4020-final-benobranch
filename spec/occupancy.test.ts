@@ -1,6 +1,9 @@
-// Checks ANU-013's minimal occupancy primitive: placeUnit/moveUnit messages
+// Checks ANU-013's minimal occupancy primitive: placeUnit/moveUnits messages
 // and the occupancy broadcast, with the placeholder "any real suburb"
 // eligibility ANU-014 later replaces with real adjacency/flight rules.
+// ANU-027 replaced the one-unit-at-a-time moveUnit message with moveUnits
+// (a per-type count, from one suburb to another) — the move test below sends
+// a single drone via a `{ drone: 1 }` order instead.
 import { readFileSync } from "node:fs";
 import { expect, inject, it } from "vitest";
 import WebSocket from "ws";
@@ -89,7 +92,7 @@ it("rejects placing a unit in a suburb that doesn't exist", async () => {
   await closeAndWait(creator);
 });
 
-it("moves a placed unit to a different real suburb", async () => {
+it("moves a placed unit to a different real suburb via moveUnits", async () => {
   const { creator } = await createStartedLobby(`occupancy-move-${Date.now()}`);
 
   // A drone, not a robot: this test exercises the move primitive itself
@@ -102,7 +105,7 @@ it("moves a placed unit to a different real suburb", async () => {
   const placed = await waitFor(creator, (m) => m.type === "occupancy" && (m.units as { sal_code: string }[]).some((u) => u.sal_code === REAL_SAL_CODE));
   const unitId = (placed.units as { id: string; sal_code: string }[]).find((u) => u.sal_code === REAL_SAL_CODE)!.id;
 
-  send(creator, { type: "moveUnit", unitId, sal_code: ANOTHER_REAL_SAL_CODE });
+  send(creator, { type: "moveUnits", fromSalCode: REAL_SAL_CODE, toSalCode: ANOTHER_REAL_SAL_CODE, counts: { drone: 1 } });
   const moved = await waitFor(
     creator,
     (m) =>

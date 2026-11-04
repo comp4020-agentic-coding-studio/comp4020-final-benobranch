@@ -95,8 +95,8 @@ afterAll(async () => {
 
 /**
  * No protocol message grants scrap directly — it's only earned via kills
- * (server/units.ts), and a kill needs a genuine enemy occupant: attackSuburb
- * against a target with no OTHER player's unit present just moves the
+ * (server/units.ts), and a kill needs a genuine enemy occupant: a moveUnits
+ * order against a target with no OTHER player's unit present just moves the
  * attacker there ("undefended", issues/ANU-014.md's Resolution), so the
  * defending drone must belong to a second, separate player. Repeatedly
  * attacks a freshly-placed defender (scrap_value 2, owned by `defender`) at
@@ -108,7 +108,7 @@ afterAll(async () => {
  */
 async function earnScrapByKilling(
   attacker: Client,
-  attackerUnitId: string,
+  attackerSalCode: string,
   defender: Client,
   spawnSalCode: string,
   targetSalCode: string,
@@ -116,7 +116,7 @@ async function earnScrapByKilling(
   for (let i = 0; i < 20; i++) {
     send(defender, { type: "placeUnit", sal_code: targetSalCode, unitTypeKey: "drone" });
     await waitFor(defender, (m) => m.type === "occupancy", 300);
-    send(attacker, { type: "attackSuburb", unitId: attackerUnitId, sal_code: targetSalCode });
+    send(attacker, { type: "moveUnits", fromSalCode: attackerSalCode, toSalCode: targetSalCode, counts: { robot: 1 } });
     try {
       const economy = await waitFor(attacker, (m) => m.type === "economy", 300);
       return economy.scrap as number;
@@ -154,7 +154,7 @@ it("hello yields a unitCatalog with the real seeded drone/robot stats, not place
   await closeAndWait(client);
 });
 
-it("a kill via attackSuburb sends economy to the attacker only, not to a bystander in the same lobby", async () => {
+it("a kill via moveUnits sends economy to the attacker only, not to a bystander in the same lobby", async () => {
   const lobbyName = `economy-kill-${Date.now()}`;
   const attacker = await connect();
   send(attacker, { type: "createLobby", name: lobbyName, capacity: 4, callsign: "attacker" });
@@ -173,8 +173,7 @@ it("a kill via attackSuburb sends economy to the attacker only, not to a bystand
   const targetSalCode = [...adjacency.get(spawnSalCode)!][0];
 
   send(attacker, { type: "placeUnit", sal_code: spawnSalCode, unitTypeKey: "robot" });
-  const placed = await waitFor(attacker, (m) => m.type === "occupancy" && (m.units as { sal_code: string; ownerPlayerId: string }[]).some((u) => u.sal_code === spawnSalCode));
-  const attackerUnitId = (placed.units as { id: string; sal_code: string }[]).find((u) => u.sal_code === spawnSalCode)!.id;
+  await waitFor(attacker, (m) => m.type === "occupancy" && (m.units as { sal_code: string; ownerPlayerId: string }[]).some((u) => u.sal_code === spawnSalCode));
 
   // Clear history before the kill-seeking loop: startLobby already sent
   // attacker an `economy` message (scrap: 0), which would otherwise satisfy
@@ -182,7 +181,7 @@ it("a kill via attackSuburb sends economy to the attacker only, not to a bystand
   // regardless of whether that iteration's attack actually killed anything.
   attacker.messages.length = 0;
   bystander.messages.length = 0;
-  await earnScrapByKilling(attacker, attackerUnitId, bystander, spawnSalCode, targetSalCode);
+  await earnScrapByKilling(attacker, spawnSalCode, bystander, spawnSalCode, targetSalCode);
 
   // The bystander, in the same lobby, must NOT have received any economy
   // message at any point — it's private to the player it belongs to.

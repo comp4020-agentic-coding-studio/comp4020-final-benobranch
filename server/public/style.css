@@ -527,6 +527,51 @@ button:not(:disabled):hover {
   background: var(--accent);
 }
 
+/* ANU-027: the Risk-style "Move units" quantity panel — one .move-panel__row
+   per unit type present at the source suburb, a number input plus
+   -10/-5/+5/+10 steppers, then either a destination hint or (once a
+   destination has been picked and robots greyed out) a Send button. */
+.move-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.move-panel__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+}
+
+.move-panel__label {
+  flex: 1 1 auto;
+  min-width: 5rem;
+}
+
+.move-panel__input {
+  width: 3.5rem;
+  padding: 0.3rem 0.4rem;
+}
+
+.move-panel__step {
+  font-size: 0.75rem;
+  padding: 0.3rem 0.45rem;
+}
+
+.move-panel__note {
+  flex-basis: 100%;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.move-panel__hint {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  margin: 0;
+}
+
 /* ANU-029: Research tab (skill tree). Cards reuse .roster-list li; a node
    with a prerequisite sits indented under its parent with a connector. */
 /* Four tabs now share the 320px sidebar — trim side padding so "Territory"

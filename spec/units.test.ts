@@ -213,3 +213,92 @@ it("placeUnit stays unrestricted by adjacency (ANU-017's capture-contest tests r
   expect(placed.ok).toBe(true);
   store.close();
 });
+
+// --- moveUnits (ANU-027): Risk-style bulk move/attack, one order per call --- //
+
+it("moveUnits splits a count across multiple types, moving exactly that many of each and leaving the rest at the source", () => {
+  const { store, lobbyId, owner } = setup();
+  const units = createUnits(store.db);
+  for (let i = 0; i < 5; i++) units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "drone");
+  for (let i = 0; i < 3; i++) units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "robot");
+
+  const result = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, ADJACENT_SAL_CODE, { drone: 2, robot: 1 });
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error("unreachable");
+  expect(result.outcomes).toHaveLength(3);
+  expect(result.outcomes.every((o) => o.outcome === "moved")).toBe(true);
+
+  const atDestination = units.getOccupancy(lobbyId).filter((u) => u.sal_code === ADJACENT_SAL_CODE);
+  expect(atDestination.filter((u) => u.unitTypeKey === "drone")).toHaveLength(2);
+  expect(atDestination.filter((u) => u.unitTypeKey === "robot")).toHaveLength(1);
+
+  const atSource = units.getOccupancy(lobbyId).filter((u) => u.sal_code === SPAWN_SAL_CODE);
+  expect(atSource.filter((u) => u.unitTypeKey === "drone")).toHaveLength(3);
+  expect(atSource.filter((u) => u.unitTypeKey === "robot")).toHaveLength(2);
+  store.close();
+});
+
+it("moveUnits rejects an order requesting more of a type than currently sit at the source, without moving anything", () => {
+  const { store, lobbyId, owner } = setup();
+  const units = createUnits(store.db);
+  units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "drone");
+
+  const result = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, ADJACENT_SAL_CODE, { drone: 2 });
+  expect(result).toEqual({ ok: false, reason: "insufficient-units" });
+
+  const atDestination = units.getOccupancy(lobbyId).filter((u) => u.sal_code === ADJACENT_SAL_CODE);
+  expect(atDestination).toHaveLength(0);
+  store.close();
+});
+
+it("moveUnits rejects the WHOLE order when any requested type can't reach the destination, not just that type's units", () => {
+  const { store, lobbyId, owner } = setup();
+  const units = createUnits(store.db);
+  units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "drone");
+  units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "robot");
+
+  const result = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, NON_ADJACENT_SAL_CODE, { drone: 1, robot: 1 });
+  expect(result).toEqual({ ok: false, reason: "unreachable" });
+
+  // Not even the drone (which COULD individually reach) should have moved —
+  // issues/ANU-027.md: "rejected for the whole order ... rather than
+  // silently moving the drones and dropping the robots."
+  const atDestination = units.getOccupancy(lobbyId).filter((u) => u.sal_code === NON_ADJACENT_SAL_CODE);
+  expect(atDestination).toHaveLength(0);
+  store.close();
+});
+
+it("moveUnits rejects an order with no positive counts (nothing selected)", () => {
+  const { store, lobbyId, owner } = setup();
+  const units = createUnits(store.db);
+  units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "drone");
+
+  const result = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, ADJACENT_SAL_CODE, { drone: 0 });
+  expect(result).toEqual({ ok: false, reason: "no-units-selected" });
+  store.close();
+});
+
+it("moveUnits against a defended destination resolves combat per unit in order — a unit killed never reaches the destination", () => {
+  const { store, lobbyId, owner } = setup();
+  const { playerId: defenderOwner } = store.resolvePlayer(undefined);
+  // rng() = 1 guarantees every hit lands at max damage — a lone 10-health
+  // defending robot absorbs one attacking drone's max hit (round(2*1.2)=2)
+  // without dying, so the first attacker's outcome is "hit" and the second
+  // attacker (sent in the same order) still gets its own turn afterward.
+  const units = createUnits(store.db, () => 1);
+  units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "drone");
+  units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "drone");
+  units.placeUnit(lobbyId, defenderOwner, ADJACENT_SAL_CODE, "robot");
+
+  const result = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, ADJACENT_SAL_CODE, { drone: 2 });
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error("unreachable");
+  expect(result.outcomes).toHaveLength(2);
+  expect(result.outcomes.every((o) => o.outcome === "hit")).toBe(true);
+
+  // Neither attacker advanced into the still-defended suburb (a "hit"
+  // outcome leaves the attacker in place, same as single-unit attackSuburb).
+  const atDestination = units.getOccupancy(lobbyId).filter((u) => u.sal_code === ADJACENT_SAL_CODE && u.ownerPlayerId === owner);
+  expect(atDestination).toHaveLength(0);
+  store.close();
+});

@@ -18,22 +18,50 @@ export type MoveUnitResult =
   | { ok: true; unit: OccupantUnit }
   | { ok: false; reason: "unknown-suburb" | "not-found" | "not-owner" | "unreachable" | "suburb-defended" };
 
-export type AttackSuburbResult =
+export type AttackOutcome =
   // Target held no enemy unit ("undefended" — see Notes in issues/ANU-014.md
   // for the exact definition) — the attack completes as a plain move.
-  | { ok: true; outcome: "moved"; unit: OccupantUnit }
+  | { outcome: "moved"; unit: OccupantUnit }
   // Defender survived the hit; attacker stays put, both units remain.
-  | { ok: true; outcome: "hit"; attacker: OccupantUnit; defender: OccupantUnit; damageDealt: number }
+  | { outcome: "hit"; attacker: OccupantUnit; defender: OccupantUnit; damageDealt: number }
   // Defender's health reached 0: it's destroyed, the attacker credits
   // scrap (scaled by the scrapPerKillMultiplier perk hook) and advances
   // into the now-vacated suburb.
-  | { ok: true; outcome: "kill"; attacker: OccupantUnit; destroyedUnitId: string; scrapCredited: number }
+  | { outcome: "kill"; attacker: OccupantUnit; destroyedUnitId: string; scrapCredited: number };
+
+export type AttackSuburbResult =
+  | ({ ok: true } & AttackOutcome)
   | { ok: false; reason: "unknown-suburb" | "not-found" | "not-owner" | "unreachable" };
+
+/**
+ * A Risk-style bulk order (ANU-027): move/attack with a declared count per
+ * unit type, from one suburb the player has units in to a destination,
+ * rather than one unitId at a time. Validated as a single all-or-nothing
+ * batch — a request for more of a type than sit at `fromSalCode`, or for a
+ * type that can't reach `toSalCode` at all, rejects the WHOLE order before
+ * anything moves (no partial application), same "server stays authoritative
+ * over a client-side courtesy check" precedent `attackSuburb` already
+ * established for a single unit (issues/ANU-013.md's Notes). Once validated,
+ * each selected unit resolves via the same per-unit `attackSuburb` combat
+ * rule, oldest-spawned first within each type, in `counts`' own key order —
+ * a unit lost mid-order (its type's attacker killed before its turn) simply
+ * doesn't get a turn; there's no separate bulk-combat formula.
+ */
+export type MoveUnitsResult =
+  | { ok: true; outcomes: AttackOutcome[] }
+  | { ok: false; reason: "unknown-suburb" | "unknown-unit-type" | "insufficient-units" | "unreachable" | "no-units-selected" };
 
 export interface Units {
   placeUnit(lobbyId: string, ownerPlayerId: string, salCode: string, unitTypeKey: string): PlaceUnitResult;
   moveUnit(lobbyId: string, ownerPlayerId: string, unitId: string, salCode: string): MoveUnitResult;
   attackSuburb(lobbyId: string, ownerPlayerId: string, unitId: string, salCode: string): AttackSuburbResult;
+  moveUnits(
+    lobbyId: string,
+    ownerPlayerId: string,
+    fromSalCode: string,
+    toSalCode: string,
+    counts: Record<string, number>,
+  ): MoveUnitsResult;
   getOccupancy(lobbyId: string): OccupantUnit[];
 }
 
@@ -184,6 +212,15 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
     "SELECT sal_code AS salCode FROM suburb_ownership WHERE lobby_id = ? AND owner_player_id = ?",
   );
   const creditScrap = db.prepare("UPDATE lobby_members SET scrap = scrap + ? WHERE lobby_id = ? AND player_id = ?");
+  // Same stable spawn-order tie-break as selectOccupantsAt — a moveUnits
+  // order sends the player's OLDEST units of a type first, so which
+  // individual units go matters only for the "whose turn is next" order
+  // ANU-027's combat-per-unit-in-order rule reads, not for anything else.
+  const selectOwnedUnitsOfTypeAt = db.prepare(`
+    SELECT id, owner_player_id AS ownerPlayerId, sal_code AS salCode, unit_type_key AS unitTypeKey, health, spawned_at AS spawnedAt
+    FROM units WHERE lobby_id = ? AND sal_code = ? AND owner_player_id = ? AND unit_type_key = ?
+    ORDER BY spawned_at, id
+  `);
 
   function toOccupant(row: UnitRow): OccupantUnit {
     return { id: row.id, ownerPlayerId: row.ownerPlayerId, sal_code: row.salCode, unitTypeKey: row.unitTypeKey, health: row.health };
@@ -197,6 +234,72 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
   function canReach(lobbyId: string, ownerPlayerId: string, unitType: UnitTypeRow, target: string): boolean {
     if (unitType.movement_mode === "fly") return true; // drones ignore adjacency/corridor entirely
     return groundCanReach(ownedSalCodes(lobbyId, ownerPlayerId), target);
+  }
+
+  /**
+   * The actual per-unit move/attack-and-resolve-combat logic — extracted
+   * from the public `attackSuburb` method (same closure-extraction pattern
+   * as `canReach`/`ownedSalCodes` above) so `moveUnits` (ANU-027) can run it
+   * once per selected unit without going through a second ownership/
+   * reachability re-check keyed off reading back the player's own
+   * just-selected unit, and without duplicating the combat resolution.
+   */
+  function attackSuburbImpl(lobbyId: string, ownerPlayerId: string, unitId: string, salCode: string): AttackSuburbResult {
+    if (!validSalCodes.has(salCode)) return { ok: false, reason: "unknown-suburb" };
+    const row = selectUnit.get(unitId, lobbyId) as UnitRow | undefined;
+    if (!row) return { ok: false, reason: "not-found" };
+    if (row.ownerPlayerId !== ownerPlayerId) return { ok: false, reason: "not-owner" };
+
+    const attackerType = selectUnitType.get(row.unitTypeKey) as unknown as UnitTypeRow;
+    if (!canReach(lobbyId, ownerPlayerId, attackerType, salCode)) return { ok: false, reason: "unreachable" };
+
+    const occupants = (selectOccupantsAt.all(lobbyId, salCode) as unknown as OccupantRow[]).filter((o) => o.id !== unitId);
+    const defenders = occupants.filter((o) => o.ownerPlayerId !== ownerPlayerId);
+
+    // "Undefended" (issues/ANU-014.md): no unit owned by anyone other
+    // than the attacker currently occupies the target — true whether the
+    // suburb is neutral, owned by the attacker, or even enemy-owned with
+    // no units garrisoned there. Capturing ownership itself is ANU-017's
+    // job; this just lets the attacking unit advance into it.
+    if (defenders.length === 0) {
+      updateUnitSalCode.run(salCode, unitId);
+      return { ok: true, outcome: "moved", unit: toOccupant({ ...row, salCode }) };
+    }
+
+    const defender = defenders[0]; // stable spawn order — see selectOccupantsAt
+    const defenderType = selectUnitType.get(defender.unitTypeKey) as unknown as UnitTypeRow;
+
+    // Random-element resolution (confirmed with the user over
+    // AskUserQuestion — see issues/ANU-014.md Resolution): damage is the
+    // attacker's base damage scaled by a uniform +/-20% roll, floored at
+    // 1 so a hit is never a complete whiff. `rng` is injectable so
+    // spec/*.test.ts can assert an exact outcome under a seeded sequence.
+    const damageDealt = Math.max(1, Math.round(attackerType.damage * (0.8 + rng() * 0.4)));
+    const remainingHealth = defender.health - damageDealt;
+
+    if (remainingHealth > 0) {
+      updateUnitHealth.run(remainingHealth, defender.id);
+      return {
+        ok: true,
+        outcome: "hit",
+        attacker: toOccupant(row),
+        defender: toOccupant({ ...defender, health: remainingHealth }),
+        damageDealt,
+      };
+    }
+
+    deleteUnit.run(defender.id);
+    const scrapPerKillMultiplier = perks.getPerkMultipliers(lobbyId, ownerPlayerId).scrapPerKillMultiplier;
+    const scrapCredited = Math.round(defenderType.scrap_value * scrapPerKillMultiplier);
+    creditScrap.run(scrapCredited, lobbyId, ownerPlayerId);
+    updateUnitSalCode.run(salCode, unitId); // the attacker advances into the suburb it just cleared
+    return {
+      ok: true,
+      outcome: "kill",
+      attacker: toOccupant({ ...row, salCode }),
+      destroyedUnitId: defender.id,
+      scrapCredited,
+    };
   }
 
   return {
@@ -235,61 +338,53 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
     },
 
     attackSuburb(lobbyId, ownerPlayerId, unitId, salCode) {
-      if (!validSalCodes.has(salCode)) return { ok: false, reason: "unknown-suburb" };
-      const row = selectUnit.get(unitId, lobbyId) as UnitRow | undefined;
-      if (!row) return { ok: false, reason: "not-found" };
-      if (row.ownerPlayerId !== ownerPlayerId) return { ok: false, reason: "not-owner" };
+      return attackSuburbImpl(lobbyId, ownerPlayerId, unitId, salCode);
+    },
 
-      const attackerType = selectUnitType.get(row.unitTypeKey) as unknown as UnitTypeRow;
-      if (!canReach(lobbyId, ownerPlayerId, attackerType, salCode)) return { ok: false, reason: "unreachable" };
-
-      const occupants = (selectOccupantsAt.all(lobbyId, salCode) as unknown as OccupantRow[]).filter((o) => o.id !== unitId);
-      const defenders = occupants.filter((o) => o.ownerPlayerId !== ownerPlayerId);
-
-      // "Undefended" (issues/ANU-014.md): no unit owned by anyone other
-      // than the attacker currently occupies the target — true whether the
-      // suburb is neutral, owned by the attacker, or even enemy-owned with
-      // no units garrisoned there. Capturing ownership itself is ANU-017's
-      // job; this just lets the attacking unit advance into it.
-      if (defenders.length === 0) {
-        updateUnitSalCode.run(salCode, unitId);
-        return { ok: true, outcome: "moved", unit: toOccupant({ ...row, salCode }) };
+    moveUnits(lobbyId, ownerPlayerId, fromSalCode, toSalCode, counts) {
+      if (!validSalCodes.has(fromSalCode) || !validSalCodes.has(toSalCode)) {
+        return { ok: false, reason: "unknown-suburb" };
       }
 
-      const defender = defenders[0]; // stable spawn order — see selectOccupantsAt
-      const defenderType = selectUnitType.get(defender.unitTypeKey) as unknown as UnitTypeRow;
+      // Validate the whole order up front — reachability and stock are
+      // checked for EVERY requested type before any unit actually moves, so
+      // a bad order never partially applies (issues/ANU-027.md's "done
+      // when": requesting more robots than can reach rejects the whole
+      // order, not just the robots).
+      const unitIdsInOrder: string[] = [];
+      for (const [unitTypeKey, rawCount] of Object.entries(counts)) {
+        const count = Math.trunc(rawCount);
+        if (count <= 0) continue;
 
-      // Random-element resolution (confirmed with the user over
-      // AskUserQuestion — see issues/ANU-014.md Resolution): damage is the
-      // attacker's base damage scaled by a uniform +/-20% roll, floored at
-      // 1 so a hit is never a complete whiff. `rng` is injectable so
-      // spec/*.test.ts can assert an exact outcome under a seeded sequence.
-      const damageDealt = Math.max(1, Math.round(attackerType.damage * (0.8 + rng() * 0.4)));
-      const remainingHealth = defender.health - damageDealt;
+        const unitType = selectUnitType.get(unitTypeKey) as UnitTypeRow | undefined;
+        if (!unitType) return { ok: false, reason: "unknown-unit-type" };
+        if (!canReach(lobbyId, ownerPlayerId, unitType, toSalCode)) return { ok: false, reason: "unreachable" };
 
-      if (remainingHealth > 0) {
-        updateUnitHealth.run(remainingHealth, defender.id);
-        return {
-          ok: true,
-          outcome: "hit",
-          attacker: toOccupant(row),
-          defender: toOccupant({ ...defender, health: remainingHealth }),
-          damageDealt,
-        };
+        const available = selectOwnedUnitsOfTypeAt.all(lobbyId, fromSalCode, ownerPlayerId, unitTypeKey) as unknown as OccupantRow[];
+        if (available.length < count) return { ok: false, reason: "insufficient-units" };
+
+        for (let i = 0; i < count; i++) unitIdsInOrder.push(available[i].id);
       }
 
-      deleteUnit.run(defender.id);
-      const scrapPerKillMultiplier = perks.getPerkMultipliers(lobbyId, ownerPlayerId).scrapPerKillMultiplier;
-      const scrapCredited = Math.round(defenderType.scrap_value * scrapPerKillMultiplier);
-      creditScrap.run(scrapCredited, lobbyId, ownerPlayerId);
-      updateUnitSalCode.run(salCode, unitId); // the attacker advances into the suburb it just cleared
-      return {
-        ok: true,
-        outcome: "kill",
-        attacker: toOccupant({ ...row, salCode }),
-        destroyedUnitId: defender.id,
-        scrapCredited,
-      };
+      if (unitIdsInOrder.length === 0) return { ok: false, reason: "no-units-selected" };
+
+      // Each selected unit resolves via the same per-unit attackSuburb rule,
+      // in order — a hit that kills an earlier unit in this order doesn't
+      // stop later ones from still getting their own turn (issues/ANU-027.md:
+      // "no new bulk-combat formula"). Every unitId here was just confirmed
+      // owned-and-present-at-fromSalCode above, and reachability was already
+      // checked per type, so attackSuburbImpl's own checks can't fail here
+      // except by the target suburb's occupants changing between selected
+      // units within this same order (e.g. an earlier unit's kill clearing
+      // the way, or a later unit facing a fresh defender) — exactly the
+      // live combat resolution this rule intends.
+      const outcomes: AttackOutcome[] = [];
+      for (const unitId of unitIdsInOrder) {
+        const result = attackSuburbImpl(lobbyId, ownerPlayerId, unitId, toSalCode);
+        if (result.ok) outcomes.push(result);
+      }
+
+      return { ok: true, outcomes };
     },
 
     getOccupancy(lobbyId) {

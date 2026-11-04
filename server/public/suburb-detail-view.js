@@ -8,13 +8,23 @@
 /** @typedef {import("../protocol.ts").FactoryState} FactoryState */
 
 /**
+ * One of the viewing player's own unit types present at the selected
+ * suburb, and how many — the Risk-style "Move units" quantity panel's
+ * per-row data (ANU-027), replacing the old one-unit-at-a-time
+ * `sendableUnits` list.
+ * @typedef {object} MovableUnitGroup
+ * @property {string} unitTypeKey
+ * @property {number} count
+ */
+
+/**
  * @typedef {object} SuburbDetail
  * @property {string | null} ownerName
  * @property {string | null} ownerColor
  * @property {OccupantUnit[]} occupants
  * @property {FactoryState | null} factory
  * @property {boolean} canBuildFactory
- * @property {OccupantUnit[]} sendableUnits
+ * @property {MovableUnitGroup[]} movableUnitGroups
  */
 
 /**
@@ -36,15 +46,22 @@ export function suburbDetailViewModel({ sal_code, ownership, occupancy, factorie
   const factory = factories.find((f) => f.sal_code === sal_code) ?? null;
   const isOwnedByMe = ownerPlayerId === myPlayerId;
 
+  const countByType = new Map();
+  for (const unit of occupants) {
+    if (unit.ownerPlayerId !== myPlayerId) continue;
+    countByType.set(unit.unitTypeKey, (countByType.get(unit.unitTypeKey) ?? 0) + 1);
+  }
+
   return {
     ownerName: owner ? owner.name : null,
     ownerColor: owner ? owner.color : null,
     occupants,
     factory,
     canBuildFactory: isOwnedByMe && !factory,
-    // Any suburb is a valid "send unit here" target — attackSuburb's
-    // reachability rule (server/units.ts) is authoritative; the client just
-    // offers the player's own units and lets the server accept/reject.
-    sendableUnits: occupancy.filter((u) => u.ownerPlayerId === myPlayerId),
+    // Grouped by type, counted at THIS suburb only — moveUnits' reachability
+    // rule (server/units.ts) is per destination and is authoritative; the
+    // client just offers how many of each type the player could send from
+    // here and lets the server accept/reject the actual order.
+    movableUnitGroups: [...countByType.entries()].map(([unitTypeKey, count]) => ({ unitTypeKey, count })),
   };
 }
