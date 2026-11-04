@@ -24,9 +24,9 @@
 // full-redraw-on-broadcast precedent renderSpawns already uses — since
 // nothing they touch resets the viewBox.
 //
-// ANU-017 adds a fourth, renderCapture, into the reserved #map-ownership
-// layer: diagonal stripes (one <pattern> per rendered stripe layer, via
-// zoneVisual's pure output) and a centered progress readout, both per
+// ANU-017 adds a fourth, renderCapture, into #map-ownership (stripes)
+// and #map-capture-progress (topmost): diagonal stripes (one <pattern> per rendered stripe layer, via
+// zoneVisual's pure output) and a progress bar under the suburb's icon, both per
 // suburb currently mid-capture — sparse, same full-redraw precedent.
 import { unitVisual } from "./unit-visual.js";
 import { factoryVisual } from "./factory-visual.js";
@@ -69,6 +69,7 @@ const basesLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.
 const unitsLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-units")));
 const factoriesLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-factories")));
 const ownershipLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-ownership")));
+const captureProgressLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-capture-progress")));
 const captureDefs = /** @type {SVGDefsElement} */ (/** @type {unknown} */ (document.getElementById("map-capture-defs")));
 const tooltip = /** @type {HTMLElement} */ (document.getElementById("map-tooltip"));
 const container = /** @type {HTMLElement} */ (document.getElementById("map-container"));
@@ -319,8 +320,9 @@ export function renderBases(ownership, members) {
 }
 
 /**
- * Renders ANU-017's diagonal-stripe contest visuals + centered progress
- * readout into the reserved #map-ownership layer, via the already-tested
+ * Renders ANU-017's diagonal-stripe contest visuals, plus a progress bar
+ * (into the topmost #map-capture-progress layer, just below the suburb's icon)
+ * — stripes go into the reserved #map-ownership layer, via the already-tested
  * zoneVisual() pure function. Full redraw on every `captures` broadcast —
  * same replaceChildren-then-rebuild precedent as renderUnits/renderFactories
  * (sparse: only suburbs currently returned may have an active capture).
@@ -330,6 +332,7 @@ export function renderBases(ownership, members) {
  */
 export function renderCapture(captures, ownership, members) {
   ownershipLayer.replaceChildren();
+  captureProgressLayer.replaceChildren();
   captureDefs.replaceChildren();
   const colorByPlayerId = new Map(members.map((m) => [m.playerId, m.color]));
 
@@ -379,9 +382,14 @@ export function renderCapture(captures, ownership, members) {
     });
 
     if (progress !== null) {
-      const [x, y] = geo.label_point;
+      const [x, cy] = geo.label_point;
       const BAR_WIDTH = 900;
       const BAR_HEIGHT = 140;
+      // Sit the bar just under the unit/base icon centered on label_point
+      // (instead of across it), so the icon never draws over the bar.
+      const ICON_HALF = Math.max(UNIT_MARKER_SIZE, PLAYER_BASE_MARKER_SIZE) / 2;
+      const BAR_GAP = 60;
+      const y = cy + ICON_HALF + BAR_GAP + BAR_HEIGHT / 2;
       const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
       group.setAttribute("class", "capture-progress");
       const track = document.createElementNS("http://www.w3.org/2000/svg", "rect");
@@ -397,7 +405,7 @@ export function renderCapture(captures, ownership, members) {
       fillBar.setAttribute("height", String(BAR_HEIGHT));
       fillBar.setAttribute("class", "capture-progress__fill");
       group.append(track, fillBar);
-      ownershipLayer.appendChild(group);
+      captureProgressLayer.appendChild(group);
     }
   }
 }

@@ -111,6 +111,10 @@
             <g id="map-factories"></g>
             <!-- ANU-014's unit icon layer (drones/robots, in-transit state; ANU-020 renders into it via renderUnits) -->
             <g id="map-units"></g>
+            <!-- ANU-017's capture progress bars — topmost, so no marker layer (a 900-wide mega data
+                 center icon, units, bases, factories) can hide them; renderCapture draws each one just
+                 below the suburb's centered icon rather than across it. -->
+            <g id="map-capture-progress"></g>
           </svg>
           <div id="map-tooltip" class="map-tooltip" hidden></div>
         </div>
