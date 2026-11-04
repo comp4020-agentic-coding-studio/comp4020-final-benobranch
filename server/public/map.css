@@ -271,19 +271,13 @@
    first). Unlike .dc-marker/.spawn-marker, these take pointer events —
    they're selectable, not purely decorative. */
 .unit-marker {
-  stroke: #05201c;
-  stroke-width: 1.5;
-  vector-effect: non-scaling-stroke;
   cursor: pointer;
 }
 
-.unit-marker--robot {
-  /* Robots render as a diamond via a CSS transform on an otherwise-circular
-     marker — distinct silhouette from drones at a glance, not just color
-     (unitVisual's own "distinguish by icon, not just color" contract). */
-  transform-box: fill-box;
-  transform-origin: center;
-  transform: rotate(45deg) scale(0.8);
+.unit-marker__backdrop {
+  stroke: #05201c;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
 }
 
 .unit-marker--in-transit {
