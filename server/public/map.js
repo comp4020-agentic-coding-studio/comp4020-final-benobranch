@@ -518,15 +518,12 @@ function describe(/** @type {string} */ sal_code) {
   return { name: cleanLabel(info.name), lines };
 }
 
-function showTooltip(/** @type {string} */ sal_code, /** @type {number} */ clientX, /** @type {number} */ clientY) {
+function showTooltip(/** @type {string} */ sal_code) {
   const info = describe(sal_code);
   if (!info) {
     tooltip.hidden = true;
     return;
   }
-  const rect = container.getBoundingClientRect();
-  tooltip.style.left = `${clientX - rect.left}px`;
-  tooltip.style.top = `${clientY - rect.top}px`;
   tooltip.replaceChildren();
   const h3 = document.createElement("h3");
   h3.textContent = info.name; // textContent only — suburb names come from our own baked data, but no reason to risk innerHTML here either
@@ -636,7 +633,7 @@ function setupPanZoomAndTap(geometry) {
       path.classList.add("selected");
       selected = /** @type {SVGElement} */ (path);
     }
-    showTooltip(sal_code, event.clientX, event.clientY);
+    showTooltip(sal_code);
     onSelect({ type: "suburb", sal_code });
   });
 }

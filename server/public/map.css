@@ -198,9 +198,12 @@
 }
 
 .map-tooltip {
+  /* Pinned to the map's top-left corner rather than following the click —
+     a cursor-anchored popup covered the very suburb being inspected. */
   position: absolute;
-  left: 0;
-  top: 0;
+  left: 0.75rem;
+  top: 0.75rem;
+  z-index: 1;
   max-width: 220px;
   background: var(--panel);
   border: 1px solid var(--accent-dim);
@@ -208,7 +211,6 @@
   padding: 0.5rem 0.65rem;
   font-size: 0.85rem;
   pointer-events: none;
-  transform: translate(-50%, calc(-100% - 0.6rem));
 }
 
 .map-tooltip h3 {
