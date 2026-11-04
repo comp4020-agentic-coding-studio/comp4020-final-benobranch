@@ -282,7 +282,7 @@ async function closeAndWait(client: Client): Promise<void> {
 }
 
 const dataDir = mkdtempSync(join(tmpdir(), "anu017-capture-restart-"));
-const port = 8105;
+const port = 8106;
 const servers: SpawnedServer[] = [];
 afterAll(async () => {
   for (const server of servers) await server.stop();
