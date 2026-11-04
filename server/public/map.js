@@ -23,11 +23,17 @@
 // unit or factory. None of the three diff against prior state — same
 // full-redraw-on-broadcast precedent renderSpawns already uses — since
 // nothing they touch resets the viewBox.
+//
+// ANU-017 adds a fourth, renderCapture, into #map-ownership (stripes)
+// and #map-capture-progress (topmost): diagonal stripes (one <pattern> per rendered stripe layer, via
+// zoneVisual's pure output) and a progress bar under the suburb's icon, both per
+// suburb currently mid-capture — sparse, same full-redraw precedent.
 import { unitVisual } from "./unit-visual.js";
 import { factoryVisual } from "./factory-visual.js";
 import { DATA_CENTER_TIER_ICONS, DATA_CENTER_TIER_MARKER_SIZE } from "./data-center-visual.js";
 import { UNIT_ARCHETYPE_ICONS, UNIT_MARKER_SIZE } from "./unit-icon.js";
 import { PLAYER_BASE_ICON, PLAYER_BASE_MARKER_SIZE } from "./base-icon.js";
+import { zoneVisual } from "./capture-visual.js";
 
 /**
  * @typedef {{idx: number, sal_code: string, name: string, is_remainder: boolean}} MapSuburb
@@ -51,6 +57,7 @@ import { PLAYER_BASE_ICON, PLAYER_BASE_MARKER_SIZE } from "./base-icon.js";
  * @typedef {import("../protocol.ts").OccupantUnit} OccupantUnit
  * @typedef {import("../protocol.ts").FactoryState} FactoryState
  * @typedef {import("../protocol.ts").UnitTypeCatalogEntry} UnitTypeCatalogEntry
+ * @typedef {import("../protocol.ts").SuburbCaptureState} SuburbCaptureState
  * @typedef {{type: "suburb", sal_code: string} | {type: "unit", unitId: string} | {type: "factory", factoryId: string} | null} MapSelection
  */
 
@@ -61,6 +68,9 @@ const spawnLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.
 const basesLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-bases")));
 const unitsLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-units")));
 const factoriesLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-factories")));
+const ownershipLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-ownership")));
+const captureProgressLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-capture-progress")));
+const captureDefs = /** @type {SVGDefsElement} */ (/** @type {unknown} */ (document.getElementById("map-capture-defs")));
 const tooltip = /** @type {HTMLElement} */ (document.getElementById("map-tooltip"));
 const container = /** @type {HTMLElement} */ (document.getElementById("map-container"));
 const attributionEl = /** @type {HTMLElement} */ (document.getElementById("map-attribution"));
@@ -306,6 +316,97 @@ export function renderBases(ownership, members) {
     group.appendChild(backdrop);
     group.appendChild(icon);
     basesLayer.appendChild(group);
+  }
+}
+
+/**
+ * Renders ANU-017's diagonal-stripe contest visuals, plus a progress bar
+ * (into the topmost #map-capture-progress layer, just below the suburb's icon)
+ * — stripes go into the reserved #map-ownership layer, via the already-tested
+ * zoneVisual() pure function. Full redraw on every `captures` broadcast —
+ * same replaceChildren-then-rebuild precedent as renderUnits/renderFactories
+ * (sparse: only suburbs currently returned may have an active capture).
+ * @param {SuburbCaptureState[]} captures
+ * @param {Record<string, string>} ownership
+ * @param {PlayerPresence[]} members
+ */
+export function renderCapture(captures, ownership, members) {
+  ownershipLayer.replaceChildren();
+  captureProgressLayer.replaceChildren();
+  captureDefs.replaceChildren();
+  const colorByPlayerId = new Map(members.map((m) => [m.playerId, m.color]));
+
+  for (const capture of captures) {
+    const geo = sal_codeToGeo.get(capture.sal_code);
+    if (!geo) continue;
+    const { stripes, progress } = zoneVisual({
+      ownerPlayerId: ownership[capture.sal_code] ?? null,
+      capture,
+      colorByPlayerId,
+    });
+    if (stripes.length === 0) continue; // fill-only (case 1) never applies here — captures is already sparse to in-progress suburbs
+
+    // Non-overlapping diagonal stripes (issues/ANU-017.md: "do not let the
+    // stripes overlap"): each stripe gets its own <pattern>, tiled the same
+    // way, but painting only its own 1/N vertical band of each tile BEFORE
+    // the shared 45-degree rotation — so N stripes partition each tile's
+    // diagonal period into N parallel bands instead of drawing over the
+    // same pixels.
+    const TILE = 320;
+    const n = stripes.length;
+    stripes.forEach((stripe, i) => {
+      const patternId = `capture-stripe-${capture.sal_code}-${i}`;
+      const pattern = document.createElementNS("http://www.w3.org/2000/svg", "pattern");
+      pattern.setAttribute("id", patternId);
+      pattern.setAttribute("patternUnits", "userSpaceOnUse");
+      pattern.setAttribute("width", String(TILE));
+      pattern.setAttribute("height", String(TILE));
+      pattern.setAttribute("patternTransform", "rotate(45)");
+      const band = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      band.setAttribute("x", String((i * TILE) / n));
+      band.setAttribute("y", "0");
+      band.setAttribute("width", String(TILE / n));
+      band.setAttribute("height", String(TILE));
+      band.setAttribute("fill", stripe.color);
+      pattern.appendChild(band);
+      captureDefs.appendChild(pattern);
+
+      const overlay = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      overlay.setAttribute("d", geo.path);
+      overlay.setAttribute("fill", `url(#${patternId})`);
+      overlay.setAttribute(
+        "class",
+        stripe.pulsing ? "capture-stripe capture-stripe--pulsing" : "capture-stripe",
+      );
+      ownershipLayer.appendChild(overlay);
+    });
+
+    if (progress !== null) {
+      const [x, cy] = geo.label_point;
+      const BAR_WIDTH = 900;
+      const BAR_HEIGHT = 140;
+      // Sit the bar just under the unit/base icon centered on label_point
+      // (instead of across it), so the icon never draws over the bar.
+      const ICON_HALF = Math.max(UNIT_MARKER_SIZE, PLAYER_BASE_MARKER_SIZE) / 2;
+      const BAR_GAP = 60;
+      const y = cy + ICON_HALF + BAR_GAP + BAR_HEIGHT / 2;
+      const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      group.setAttribute("class", "capture-progress");
+      const track = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      track.setAttribute("x", String(x - BAR_WIDTH / 2));
+      track.setAttribute("y", String(y - BAR_HEIGHT / 2));
+      track.setAttribute("width", String(BAR_WIDTH));
+      track.setAttribute("height", String(BAR_HEIGHT));
+      track.setAttribute("class", "capture-progress__track");
+      const fillBar = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      fillBar.setAttribute("x", String(x - BAR_WIDTH / 2));
+      fillBar.setAttribute("y", String(y - BAR_HEIGHT / 2));
+      fillBar.setAttribute("width", String(BAR_WIDTH * progress));
+      fillBar.setAttribute("height", String(BAR_HEIGHT));
+      fillBar.setAttribute("class", "capture-progress__fill");
+      group.append(track, fillBar);
+      captureProgressLayer.appendChild(group);
+    }
   }
 }
 
