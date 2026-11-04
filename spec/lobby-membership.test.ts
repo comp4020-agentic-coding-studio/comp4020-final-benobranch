@@ -35,7 +35,6 @@ it("switching lobbies resets economy and perk state, not just lobby membership",
   const lobbyB = store.createLobby("switch-economy-b", 4, playerId, "switcher");
   const economy = store.getMemberEconomy(lobbyB.lobbyId, playerId)!;
   expect(economy.scrap).toBe(0);
-  expect(economy.tflops).toBe(0);
   expect(store.perks.getPerkMultipliers(lobbyB.lobbyId, playerId).scrapPerKillMultiplier, "a fresh lobby membership should not carry over the old lobby's perk purchases").toBe(1);
 
   store.close();

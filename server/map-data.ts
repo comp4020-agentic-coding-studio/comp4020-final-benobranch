@@ -33,8 +33,23 @@ const mapData: MapData = JSON.parse(readFileSync(`${MAP_DATA_DIR}/map.json`, "ut
 export const validSalCodes = new Set(mapData.suburbs.map((s) => s.sal_code));
 const nameToSalCode = new Map(mapData.suburbs.map((s) => [s.name, s.sal_code]));
 
+// sal_code -> TFLOPS, built once from the same data_centers list, for
+// server/tflops.ts's live per-player TFLOPS sum (ANU-019: TFLOPS is a
+// speed multiplier derived from currently-held data centers, not a spent
+// currency — see that issue's Resolution).
+const dataCenterTflopsBySalCode = new Map(
+  mapData.data_centers
+    .map((dc) => [nameToSalCode.get(dc.name), dc.tflops] as const)
+    .filter((entry): entry is [string, number] => entry[0] !== undefined),
+);
+
 export function getMapData(): MapData {
   return mapData;
+}
+
+/** sal_code -> TFLOPS for every data-center suburb; absent for a non-data-center suburb. */
+export function getDataCenterTflopsBySalCode(): ReadonlyMap<string, number> {
+  return dataCenterTflopsBySalCode;
 }
 
 /** Spawn suburbs for a given lobby capacity, by sal_code (not display name) — null if no table entry for that size. */

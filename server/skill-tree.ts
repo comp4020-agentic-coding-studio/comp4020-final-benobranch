@@ -1,16 +1,18 @@
-// Skill tree (ANU-016), funded by TFLOPS (not scrap — PLAN.md's two-resource
-// split, [[ANU-013]]'s Resolution). Per issues/ANU-013.md's file-layout
-// convention: server-side logic for this system lives in its own module.
-// Node *structure* (id, prerequisite, cost, icon) is shared with the
-// client-side skill-tree-visual.js via server/public/skill-tree-nodes.js —
-// plain JS so the browser can load it with no bundler (same constraint
+// Skill tree (ANU-016, redesigned by ANU-019 into time-gated research —
+// PLAN.md: a data center's TFLOPS rating speeds up unlock rate, it is not a
+// currency spent on nodes). Per issues/ANU-013.md's file-layout convention:
+// server-side logic for this system lives in its own module. Node
+// *structure* (id, prerequisite, base research time, icon) is shared with
+// the client-side skill-tree-visual.js via server/public/skill-tree-nodes.js
+// — plain JS so the browser can load it with no bundler (same constraint
 // map.js/app.js/unit-visual.js/factory-visual.js are already built around).
-// This module adds the server-only piece on top: which purchased node sets
-// which perk-hook multiplier (PERK_EFFECTS below), and the purchase/
-// validation logic itself.
+// This module adds the server-only piece on top: which unlocked node sets
+// which perk-hook multiplier (PERK_EFFECTS below), and the research
+// start/settle logic itself.
 import type { DatabaseSync } from "node:sqlite";
 import { createPerkHook, type PerkMultipliers } from "./perks.ts";
-import { nowIso } from "./time.ts";
+import { elapsedMs, nowIso } from "./time.ts";
+import type { TflopsSource } from "./tflops.ts";
 import { SKILL_NODES, type SkillNodeDef } from "./public/skill-tree-nodes.js";
 
 export { SKILL_NODES };
@@ -18,15 +20,16 @@ export type { SkillNodeDef };
 
 /**
  * Which perk-hook multiplier a "perk"-kind node sets, and to what absolute
- * value (setPerkMultiplier is absolute, not stacking — server/perks.ts — so
- * a repeated purchase, already rejected by "already-unlocked" below, could
- * never have double-applied anyway, but the absolute-value contract is what
- * makes a single purchase's effect exact and testable).
+ * value (setPerkMultiplier is absolute, not stacking — server/perks.ts —
+ * which combined with `skill_research`'s one-row-per-player primary key
+ * means a node can never complete twice for the same player anyway, but the
+ * absolute-value contract is what makes a single completion's effect exact
+ * and testable).
  *
  * dataTransferSpeedMultiplier (data-uplink) has no reader yet — PLAN.md's
  * disconnected (air) vs. connected (cable) TFLOPS-flow mechanic isn't
  * implemented by any current or sibling issue (issues/ANU-016.md's Done-when
- * flags this explicitly). The node is purchasable and the multiplier is set
+ * flags this explicitly). The node is researchable and the multiplier is set
  * for real; wiring it to an actual effect is left for whichever future issue
  * implements TFLOPS flow.
  *
@@ -49,13 +52,40 @@ const PERK_EFFECTS: Partial<Record<string, { key: keyof PerkMultipliers; value: 
 
 const NODES_BY_ID = new Map(SKILL_NODES.map((n) => [n.id, n]));
 
-export type PurchaseNodeResult =
-  | { ok: true; unlockedNodeIds: string[]; multipliers: PerkMultipliers }
-  | { ok: false; reason: "unknown-node" | "already-unlocked" | "prerequisite-not-met" | "insufficient-tflops" };
+/**
+ * How much a player's current live TFLOPS (server/tflops.ts — the sum of
+ * data centers they currently hold) speeds up research: 1x at 0 TFLOPS
+ * (research still proceeds at the node's base rate, never blocked for lack
+ * of compute — PLAN.md's "speed up the unlock rate," not "gate it"), and
+ * +1x per 100 TFLOPS (a single mega data center, PLAN.md's strongest tier,
+ * exactly doubles speed on its own). A placeholder curve, same footing as
+ * server/skill-tree.ts's other tuning constants — PLAN.md lists the exact
+ * TFLOPS-to-research-speed curve as still open.
+ */
+function speedMultiplier(tflops: number): number {
+  return 1 + tflops / 100;
+}
+
+export interface ResearchingState {
+  nodeId: string;
+  startedAt: string;
+  /** 0 (just started) to 1 (about to complete) at the player's current TFLOPS-derived speed. */
+  progressFraction: number;
+}
+
+export interface SkillTreeState {
+  unlockedNodeIds: string[];
+  /** null when no node is currently being researched — see StartResearchResult's "already-researching" rejection for why there's at most one. */
+  researching: ResearchingState | null;
+}
+
+export type StartResearchResult =
+  | { ok: true; state: SkillTreeState; multipliers: PerkMultipliers }
+  | { ok: false; reason: "unknown-node" | "already-unlocked" | "prerequisite-not-met" | "already-researching" };
 
 export interface SkillTree {
-  purchaseNode(lobbyId: string, playerId: string, nodeId: string): PurchaseNodeResult;
-  getUnlockedNodeIds(lobbyId: string, playerId: string): string[];
+  startResearch(lobbyId: string, playerId: string, nodeId: string): StartResearchResult;
+  getState(lobbyId: string, playerId: string): SkillTreeState;
 }
 
 /**
@@ -102,7 +132,12 @@ export function seedSkillGatedUnitTypes(db: DatabaseSync): void {
   upsert.run("robot-mk2", 10, 7, 7, 3000, "ground", "advanced-robot");
 }
 
-export function createSkillTree(db: DatabaseSync): SkillTree {
+interface ResearchRow {
+  nodeId: string;
+  startedAt: string;
+}
+
+export function createSkillTree(db: DatabaseSync, tflopsSource: TflopsSource): SkillTree {
   const perks = createPerkHook(db);
 
   const selectUnlocked = db.prepare(
@@ -114,23 +149,70 @@ export function createSkillTree(db: DatabaseSync): SkillTree {
   const insertUnlock = db.prepare(
     "INSERT INTO skill_nodes (lobby_id, player_id, node_id, unlocked_at) VALUES (?, ?, ?, ?)",
   );
-  // Same WHERE-guarded UPDATE shape as factories.ts's deductScrapIfAffordable
-  // and store.ts's startLobby — a single synchronous statement with no
-  // `await` between the balance check and the deduction (ADR 0001), so two
-  // near-simultaneous purchases against the same TFLOPS balance can't both
-  // read "affordable" before either writes.
-  const deductTflopsIfAffordable = db.prepare(
-    "UPDATE lobby_members SET tflops = tflops - ? WHERE lobby_id = ? AND player_id = ? AND tflops >= ?",
+  const selectResearch = db.prepare(
+    "SELECT node_id AS nodeId, started_at AS startedAt FROM skill_research WHERE lobby_id = ? AND player_id = ?",
+  );
+  // Same WHERE-guarded-INSERT concurrency shape ADR 0001's other handlers use
+  // (store.ts's startLobby, factories.ts's deductScrapIfAffordable): a
+  // single synchronous statement with no `await` between the "is anything
+  // already researching" check and the insert, so two near-simultaneous
+  // startResearch calls can't both see "nothing in progress" before either
+  // writes — the second's INSERT (same lobby_id+player_id primary key)
+  // simply fails the uniqueness constraint instead.
+  const insertResearch = db.prepare(
+    "INSERT INTO skill_research (lobby_id, player_id, node_id, started_at) VALUES (?, ?, ?, ?)",
+  );
+  const deleteResearch = db.prepare(
+    "DELETE FROM skill_research WHERE lobby_id = ? AND player_id = ? AND node_id = ?",
   );
 
   function unlockedNodeIds(lobbyId: string, playerId: string): string[] {
     return (selectUnlocked.all(lobbyId, playerId) as { nodeId: string }[]).map((r) => r.nodeId);
   }
 
+  /**
+   * Completes the player's in-progress research if its (TFLOPS-speed-
+   * adjusted) duration has elapsed: unlocks the node, applies its perk
+   * effect, and clears the research row. Stored-timestamp settle, same
+   * shape as server/factories.ts's settleFactory — called before every
+   * state read, never from an armed timer (ADR 0001).
+   */
+  function settle(lobbyId: string, playerId: string): void {
+    const row = selectResearch.get(lobbyId, playerId) as ResearchRow | undefined;
+    if (!row) return;
+    const def = NODES_BY_ID.get(row.nodeId);
+    if (!def) return; // defensive: a node definition was removed since this research started
+
+    const speed = speedMultiplier(tflopsSource.getTflops(lobbyId, playerId));
+    const requiredDurationMs = def.baseResearchTimeMs / speed;
+    if (elapsedMs(row.startedAt) < requiredDurationMs) return;
+
+    insertUnlock.run(lobbyId, playerId, row.nodeId, nowIso());
+    const effect = PERK_EFFECTS[row.nodeId];
+    if (effect) perks.setPerkMultiplier(lobbyId, playerId, effect.key, effect.value);
+    deleteResearch.run(lobbyId, playerId, row.nodeId);
+  }
+
+  function state(lobbyId: string, playerId: string): SkillTreeState {
+    settle(lobbyId, playerId);
+    const row = selectResearch.get(lobbyId, playerId) as ResearchRow | undefined;
+    let researching: ResearchingState | null = null;
+    if (row) {
+      const def = NODES_BY_ID.get(row.nodeId);
+      const speed = speedMultiplier(tflopsSource.getTflops(lobbyId, playerId));
+      const requiredDurationMs = def ? def.baseResearchTimeMs / speed : 0;
+      const fraction = requiredDurationMs > 0 ? Math.max(0, Math.min(1, elapsedMs(row.startedAt) / requiredDurationMs)) : 0;
+      researching = { nodeId: row.nodeId, startedAt: row.startedAt, progressFraction: fraction };
+    }
+    return { unlockedNodeIds: unlockedNodeIds(lobbyId, playerId), researching };
+  }
+
   return {
-    purchaseNode(lobbyId, playerId, nodeId) {
+    startResearch(lobbyId, playerId, nodeId) {
       const def = NODES_BY_ID.get(nodeId);
       if (!def) return { ok: false, reason: "unknown-node" };
+
+      settle(lobbyId, playerId); // a just-completed research shouldn't block starting the next one
 
       if (selectUnlockedOne.get(lobbyId, playerId, nodeId)) {
         return { ok: false, reason: "already-unlocked" };
@@ -140,23 +222,21 @@ export function createSkillTree(db: DatabaseSync): SkillTree {
         return { ok: false, reason: "prerequisite-not-met" };
       }
 
-      const result = deductTflopsIfAffordable.run(def.costTflops, lobbyId, playerId, def.costTflops);
-      if (result.changes === 0) return { ok: false, reason: "insufficient-tflops" };
+      if (selectResearch.get(lobbyId, playerId)) {
+        return { ok: false, reason: "already-researching" };
+      }
 
-      insertUnlock.run(lobbyId, playerId, nodeId, nowIso());
-
-      const effect = PERK_EFFECTS[nodeId];
-      if (effect) perks.setPerkMultiplier(lobbyId, playerId, effect.key, effect.value);
+      insertResearch.run(lobbyId, playerId, nodeId, nowIso());
 
       return {
         ok: true,
-        unlockedNodeIds: unlockedNodeIds(lobbyId, playerId),
+        state: state(lobbyId, playerId),
         multipliers: perks.getPerkMultipliers(lobbyId, playerId),
       };
     },
 
-    getUnlockedNodeIds(lobbyId, playerId) {
-      return unlockedNodeIds(lobbyId, playerId);
+    getState(lobbyId, playerId) {
+      return state(lobbyId, playerId);
     },
   };
 }
