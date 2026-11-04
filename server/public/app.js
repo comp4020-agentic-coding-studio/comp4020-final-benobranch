@@ -128,6 +128,8 @@ let economy = { scrap: 0, tflops: 0 };
 /** @type {import("./sidebar.js").SkillTreeState | null} ANU-029: this player's latest `skillTree` message. */
 let skillTree = null;
 let sidebarMounted = false;
+/** ANU-029: the `<action>: <reason>` errors server/index.ts sends for rejected in-game actions. */
+const IN_GAME_ACTION_ERROR = /^(placeUnit|moveUnit|attackSuburb|buildFactory|startResearch): /;
 
 function setStatus(/** @type {"connecting" | "connected" | "disconnected"} */ state) {
   statusEl.dataset.state = state;
@@ -386,11 +388,12 @@ function handleMessage(/** @type {ServerMessage} */ msg) {
       // Failed after the player chose a callsign (e.g. it was taken, or the
       // lobby filled/started in the gap) — stay on the prompt and say why.
       showError(namePromptErrorEl, msg.message);
-    } else if (sidebarMounted) {
-      // ANU-029: in a started game, an error is a rejected action
-      // (startResearch, attackSuburb, buildFactory...) — show it in the
-      // sidebar. Falling through to the Browse redirect below would kick
-      // the player out of the game they're in.
+    } else if (sidebarMounted && parseHash().screen === "lobby" && IN_GAME_ACTION_ERROR.test(msg.message)) {
+      // ANU-029: a rejected in-game action (server/index.ts prefixes these
+      // with the action name) — show it in the sidebar. Falling through to
+      // the Browse redirect below would kick the player out of their game.
+      // Only on the lobby screen: the sidebar stays mounted after navigating
+      // to Browse, and a join error there must still reach browseErrorEl.
       showSidebarError(msg.message);
     } else {
       // Failed on a plain join attempt (full/started/gone) — back to
