@@ -45,10 +45,16 @@ export interface StoredMember {
   spawnSalCode: string | null;
 }
 
+/**
+ * Scrap only, as of ANU-019 — TFLOPS is no longer a stored per-member
+ * balance (it was ANU-016's spend-based skill-tree currency; PLAN.md's
+ * actual design has data centers' TFLOPS as a live speed multiplier on
+ * skill-tree research, computed on the fly by server/tflops.ts, not
+ * accrued/spent). `lobby_members.tflops`/`tflops_last_accrued_at` are
+ * dropped in migration v7.
+ */
 export interface MemberEconomy {
   scrap: number;
-  tflops: number;
-  tflopsLastAccruedAt: string | null;
 }
 
 export interface ResolvedPlayer {
@@ -132,7 +138,7 @@ export function openStore(dbPath: string): Store {
     "SELECT name, color FROM lobby_members WHERE lobby_id = ? AND player_id = ?",
   );
   const selectMemberEconomy = db.prepare(
-    "SELECT scrap, tflops, tflops_last_accrued_at AS tflopsLastAccruedAt FROM lobby_members WHERE lobby_id = ? AND player_id = ?",
+    "SELECT scrap FROM lobby_members WHERE lobby_id = ? AND player_id = ?",
   );
   const countMembers = db.prepare("SELECT COUNT(*) AS n FROM lobby_members WHERE lobby_id = ?");
   const selectUsedColors = db.prepare("SELECT color FROM lobby_members WHERE lobby_id = ?");
@@ -165,8 +171,6 @@ export function openStore(dbPath: string): Store {
       color = excluded.color,
       joined_at = excluded.joined_at,
       scrap = 0,
-      tflops = 0,
-      tflops_last_accrued_at = NULL,
       perk_factory_build_speed_multiplier = 1,
       perk_factory_build_cost_multiplier = 1,
       perk_scrap_per_kill_multiplier = 1,
@@ -176,7 +180,7 @@ export function openStore(dbPath: string): Store {
   // Reconnect / re-send of createLobby|joinLobby for a lobby already joined:
   // touches only name/color (both already locked and unchanged in practice —
   // see joinLobby below), never economy columns. An UPDATE, not INSERT OR
-  // REPLACE, which would delete-and-reinsert the row and reset scrap/tflops/
+  // REPLACE, which would delete-and-reinsert the row and reset scrap/
   // perk multipliers to their defaults on every reconnect.
   const touchMembership = db.prepare(
     "UPDATE lobby_members SET name = ?, color = ? WHERE lobby_id = ? AND player_id = ?",
@@ -658,6 +662,46 @@ function migrate(db: DatabaseSync): void {
     try {
       db.exec("ALTER TABLE lobby_members ADD COLUMN spawn_sal_code TEXT");
       db.exec("PRAGMA user_version = 7");
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
+  // v8 (ANU-019): TFLOPS stops being a stored, spendable balance — PLAN.md's
+  // actual design has a data center's TFLOPS rating as a speed multiplier
+  // on skill-tree research, not a currency, so "a player's TFLOPS" is now
+  // computed live from currently-held data centers (server/tflops.ts), and
+  // ANU-013's `tflops`/`tflops_last_accrued_at` columns (never read by
+  // anything outside the old spend-based purchaseNode) are dead weight.
+  // Both were added via a standalone `ALTER TABLE ... ADD COLUMN` in v5 with
+  // no inline comment immediately preceding either in the stored CREATE
+  // TABLE text, so issues/ANU-023.md's DROP-COLUMN-after-a-comment
+  // corruption trigger doesn't apply here — a plain DROP COLUMN is safe,
+  // no rebuild-via-copy needed.
+  //
+  // Replaces ANU-016's spend-based purchaseNode with time-gated research:
+  // at most one in-progress node per player, stored-timestamp style
+  // (ADR 0001) like factory_production.cycle_started_at — settled lazily
+  // via elapsedMs at read/broadcast time, never an armed timer.
+  if (version < 8) {
+    db.exec("BEGIN");
+    try {
+      db.exec("ALTER TABLE lobby_members DROP COLUMN tflops");
+      db.exec("ALTER TABLE lobby_members DROP COLUMN tflops_last_accrued_at");
+
+      db.exec(`
+        CREATE TABLE skill_research (
+          lobby_id TEXT NOT NULL REFERENCES lobbies(id),
+          player_id TEXT NOT NULL REFERENCES players(player_id),
+          node_id TEXT NOT NULL,
+          started_at TEXT NOT NULL,
+          PRIMARY KEY (lobby_id, player_id)
+        )
+      `);
+
+      db.exec("PRAGMA user_version = 8");
       db.exec("COMMIT");
     } catch (err) {
       db.exec("ROLLBACK");

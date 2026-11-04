@@ -78,29 +78,41 @@ specifically wants:
   encryption to avoid other players reading your traffic" framing) —
   disconnected use is a fallback, not a dead end, so losing your corridor is
   bad but not instantly fatal.
-- TFLOPS earned fund the **skill tree**: more compute = faster research. See
-  "Two resources: TFLOPS and scrap" below for why this is no longer the
-  single resource tying territory, economy and tech together — that framing
-  was revised once the factory/unit-destruction request below named a second
-  one explicitly.
+- TFLOPS speeds up the **skill tree**: more compute = faster research, not
+  more affordable research — see "Two resources: TFLOPS and scrap" below for
+  why TFLOPS is a rate, not a currency (revised by [[ANU-019]], correcting
+  [[ANU-016]]'s original spend-based reading of this same section).
 
-### Two resources: TFLOPS and scrap (revised — see [[ANU-013]])
+### Two resources: TFLOPS and scrap (revised — see [[ANU-013]], [[ANU-019]])
 
 This section originally said TFLOPS was "the single resource that ties
 territory, economy and tech progression together... not a different
-currency." That's revised: the user's own request for factories and a skill
-tree names a second resource explicitly — "resources gained by destroying
-enemy troups" funding more factories, and a skill-tree perk for "more scrap
-gained by killing enemy troops." Both phrases only make sense if there's a
-combat currency distinct from the compute currency. So:
+currency." [[ANU-013]] revised that once: the user's own request for
+factories and a skill tree names a second resource explicitly — "resources
+gained by destroying enemy troups" funding more factories, and a skill-tree
+perk for "more scrap gained by killing enemy troops." Both phrases only make
+sense if there's a combat currency distinct from the compute resource. So:
 
-- **TFLOPS** (from data centers, per "Data centers" above) funds the
-  **skill tree** only — tech progression, not production.
+- **TFLOPS** (from data centers, per "Data centers" above) **speeds up the
+  skill tree's research rate** — it is a live multiplier derived from the
+  data centers a player currently holds, not a balance that accrues or gets
+  spent. A node researches itself over time once started (one node
+  researching at a time); holding more/stronger data centers shortens that
+  time, it never gates whether research can start at all.
 - **Scrap** (earned by destroying enemy units) funds **factory/unit
-  production** — building more factories and more troops.
+  production** — building more factories and more troops. Scrap remains the
+  only resource actually spent in the game.
 
-This keeps each resource tied to a distinct loop (hold territory → earn
-TFLOPS → unlock tech; win fights → earn scrap → build more army) rather than
+[[ANU-016]] (the skill tree) originally built this as a spend-based shop —
+TFLOPS deducted per node purchase, `insufficient-tflops` a rejection reason —
+on the strength of this section's now-corrected first revision. [[ANU-019]]
+replaced that with the time-gated design above once the user clarified the
+intent directly: a data center's TFLOPS rating was always meant to be a
+speed multiplier on unlock rate, mirroring "more compute = faster research"
+literally, never a currency.
+
+This keeps each resource tied to a distinct loop (hold territory → more
+TFLOPS → faster tech; win fights → earn scrap → build more army) rather than
 one number doing both jobs.
 
 ### Bases, drones, skill tree
@@ -114,7 +126,8 @@ one number doing both jobs.
   in-progress build) rather than destroying it.
 - The factory produces autonomous units (drones/bots) used to attack
   neighbouring suburbs and to defend owned ones, paid for in **scrap**.
-- The skill tree (funded by **TFLOPS**, faster with more compute) unlocks:
+- The skill tree (researched over time, sped up by **TFLOPS** — more compute
+  = faster, never cheaper, since nothing is spent) unlocks:
   - new unit types,
   - faster/cheaper unit production,
   - misc perks (scouting, defense bonuses, path efficiency, more scrap per
