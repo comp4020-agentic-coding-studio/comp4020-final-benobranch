@@ -3,9 +3,13 @@
 // and the per-player economy broadcast (private — sent only to the acting
 // player, never to a bystander in the same lobby). Same connect/send/
 // waitFor helpers as spec/occupancy.test.ts/spec/combat.test.ts.
-import { readFileSync } from "node:fs";
-import { expect, inject, it } from "vitest";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, expect, inject, it } from "vitest";
 import WebSocket from "ws";
+import { spawnServer, type SpawnedServer } from "./lib/spawn-server.ts";
+import { openStore } from "../server/store.ts";
 
 const baseUrl = inject("baseUrl");
 
@@ -39,9 +43,9 @@ interface Client {
   messages: ServerMessage[];
 }
 
-function connect(token?: string): Promise<Client> {
+function connect(token?: string, url: string = baseUrl): Promise<Client> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${baseUrl.replace(/^http/, "ws")}/ws`);
+    const ws = new WebSocket(`${url.replace(/^http/, "ws")}/ws`);
     const messages: ServerMessage[] = [];
     ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
     ws.on("error", reject);
@@ -73,18 +77,34 @@ async function closeAndWait(client: Client): Promise<void> {
   await new Promise((resolve) => client.ws.once("close", resolve));
 }
 
+// buildFactory needs the acting player to own a SECOND suburb (their spawn
+// already has a factory from spawnFactories — "already-exists" otherwise),
+// and no protocol message exists yet to capture one (ANU-017's capture
+// state machine is still open) — so this one test spawns its own server
+// (same pattern as spec/factories-restart.test.ts) to grant that ownership
+// via a direct store connection against the same DATA_DIR file, rather than
+// over the shared inject("baseUrl") server every other test in this file
+// uses.
+const buildFactoryTestDataDir = mkdtempSync(join(tmpdir(), "anu022-economy-buildfactory-"));
+const buildFactoryTestPort = 8105;
+let buildFactoryTestServer: SpawnedServer | undefined;
+afterAll(async () => {
+  await buildFactoryTestServer?.stop();
+  rmSync(buildFactoryTestDataDir, { recursive: true, force: true });
+});
+
 /**
  * No protocol message grants scrap directly — it's only earned via kills
  * (server/units.ts), and a kill needs a genuine enemy occupant: attackSuburb
  * against a target with no OTHER player's unit present just moves the
  * attacker there ("undefended", issues/ANU-014.md's Resolution), so the
  * defending drone must belong to a second, separate player. Repeatedly
- * attacks a freshly-placed defender (build_cost_scrap 2, owned by
- * `defender`) at `targetSalCode` until one lands as a kill, crediting the
- * attacker's own unit (placed at `spawnSalCode`) 2 scrap. Bounded well
- * under the combat rng's variance so this stays fast without needing an
- * injectable rng over the wire (spec/units.test.ts covers the rng itself
- * directly, against server/units.ts).
+ * attacks a freshly-placed defender (scrap_value 2, owned by `defender`) at
+ * `targetSalCode` until one lands as a kill, crediting the attacker's own
+ * unit (placed at `spawnSalCode`) 2 scrap. Bounded well under the combat
+ * rng's variance so this stays fast without needing an injectable rng over
+ * the wire (spec/units.test.ts covers the rng itself directly, against
+ * server/units.ts).
  */
 async function earnScrapByKilling(
   attacker: Client,
@@ -118,7 +138,7 @@ it("hello yields a unitCatalog with the real seeded drone/robot stats, not place
     key: string;
     health: number;
     damage: number;
-    buildCostScrap: number;
+    scrapValue: number;
     buildTimeMs: number;
     movementMode: string;
   }[];
@@ -128,8 +148,8 @@ it("hello yields a unitCatalog with the real seeded drone/robot stats, not place
   expect(drone).toBeDefined();
   expect(robot).toBeDefined();
   // server/units.ts's seedBaseUnitTypes — real values, not zeroed placeholders.
-  expect(drone).toMatchObject({ health: 3, damage: 2, buildCostScrap: 2, buildTimeMs: 1500, movementMode: "fly" });
-  expect(robot).toMatchObject({ health: 6, damage: 4, buildCostScrap: 4, buildTimeMs: 3000, movementMode: "ground" });
+  expect(drone).toMatchObject({ health: 3, damage: 2, scrapValue: 2, buildTimeMs: 1500, movementMode: "fly" });
+  expect(robot).toMatchObject({ health: 6, damage: 4, scrapValue: 4, buildTimeMs: 3000, movementMode: "ground" });
 
   await closeAndWait(client);
 });
@@ -172,43 +192,54 @@ it("a kill via attackSuburb sends economy to the attacker only, not to a bystand
   await closeAndWait(bystander);
 });
 
-it("queueUnit triggers an economy update to the acting player reflecting the scrap deduction", async () => {
-  const lobbyName = `economy-queue-${Date.now()}`;
-  const creator = await connect();
-  send(creator, { type: "createLobby", name: lobbyName, capacity: 4, callsign: "queuer" });
+it("buildFactory triggers an economy update to the acting player reflecting the scrap deduction (ANU-022: this is scrap's only remaining spend, since units auto-produce free)", async () => {
+  const first = await spawnServer({ port: buildFactoryTestPort, dataDir: buildFactoryTestDataDir });
+  buildFactoryTestServer = first;
+
+  const lobbyName = `economy-build-${Date.now()}`;
+  const creator = await connect(undefined, first.baseUrl);
+  const welcome = creator.messages.find((m) => m.type === "welcome")!;
+  const creatorToken = welcome.token as string;
+  const creatorPlayerId = welcome.playerId as string;
+  send(creator, { type: "createLobby", name: lobbyName, capacity: 4, callsign: "builder" });
   const created = await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { name: string }).name === lobbyName);
   const lobbyId = (created.lobby as { lobbyId: string }).lobbyId;
-
-  // A second player to own the defender a kill needs (attackSuburb against
-  // a target with no OTHER player's unit present is just an undefended
-  // "move" — see earnScrapByKilling's comment).
-  const other = await connect();
-  send(other, { type: "joinLobby", lobbyId, callsign: "target-owner" });
-  await waitFor(other, (m) => m.type === "lobbyState" && (m.lobby as { lobbyId: string }).lobbyId === lobbyId);
 
   send(creator, { type: "startLobby" });
   await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { lobbyId: string; started: boolean }).lobbyId === lobbyId && (m.lobby as { started: boolean }).started);
 
-  const factoriesMsg = await waitFor(creator, (m) => m.type === "factories" && (m.lobbyId as string) === lobbyId);
-  const factoryId = (factoriesMsg.factories as { id: string }[])[0].id;
-
   const spawnSalCode = nameToSalCode.get(mapData.spawn_table_by_lobby_size["4"].spawns[0])!;
-  const targetSalCode = [...adjacency.get(spawnSalCode)!][0];
-  send(creator, { type: "placeUnit", sal_code: spawnSalCode, unitTypeKey: "robot" });
-  const placed = await waitFor(creator, (m) => m.type === "occupancy" && (m.units as { sal_code: string }[]).some((u) => u.sal_code === spawnSalCode));
-  const unitId = (placed.units as { id: string; sal_code: string }[]).find((u) => u.sal_code === spawnSalCode)!.id;
-  // Clear history before the kill-seeking loop — see the kill-privacy
-  // test's identical comment for why (a stale economy:{scrap:0} from
-  // startLobby would otherwise satisfy the first waitFor immediately).
-  creator.messages.length = 0;
-  const scrapAfterKill = await earnScrapByKilling(creator, unitId, other, spawnSalCode, targetSalCode);
-  expect(scrapAfterKill).toBeGreaterThanOrEqual(2); // drone's build_cost_scrap — enough to afford a queue below
-
-  creator.messages.length = 0;
-  send(creator, { type: "queueUnit", factoryId, unitTypeKey: "drone" });
-  const economyAfterQueue = await waitFor(creator, (m) => m.type === "economy");
-  expect(economyAfterQueue.scrap).toBe(scrapAfterKill - 2); // drone build_cost_scrap, server/units.ts
-
+  // A second suburb the creator owns — their spawn already has a factory
+  // from spawnFactories, so buildFactory there would fail "already-exists".
+  // No protocol message exists yet to capture a suburb (ANU-017 is still
+  // open), so grant it via a direct store connection against the same
+  // DATA_DIR file, same store-level-setup boundary
+  // spec/factories-restart.test.ts uses — the server is stopped first
+  // (same reasoning that test documents: two live SQLite connections to the
+  // same file, one of them a separate process, risk lock contention) and
+  // respawned afterward.
+  const secondSalCode = mapData.suburbs.find((s) => s.sal_code !== spawnSalCode)!.sal_code;
   await closeAndWait(creator);
-  await closeAndWait(other);
+  await first.stop();
+  const setupStore = openStore(`${buildFactoryTestDataDir}/game.db`);
+  setupStore.db
+    .prepare(
+      "INSERT INTO suburb_ownership (lobby_id, sal_code, owner_player_id) VALUES (?, ?, ?) ON CONFLICT(lobby_id, sal_code) DO UPDATE SET owner_player_id = excluded.owner_player_id",
+    )
+    .run(lobbyId, secondSalCode, creatorPlayerId);
+  setupStore.db
+    .prepare("UPDATE lobby_members SET scrap = scrap + 20 WHERE lobby_id = ? AND player_id = ?") // FACTORY_BUILD_COST_SCRAP
+    .run(lobbyId, creatorPlayerId);
+  setupStore.close();
+
+  const reopened = await spawnServer({ port: buildFactoryTestPort, dataDir: buildFactoryTestDataDir });
+  buildFactoryTestServer = reopened;
+  const resumedCreator = await connect(creatorToken, reopened.baseUrl);
+
+  resumedCreator.messages.length = 0;
+  send(resumedCreator, { type: "buildFactory", sal_code: secondSalCode });
+  const economyAfterBuild = await waitFor(resumedCreator, (m) => m.type === "economy");
+  expect(economyAfterBuild.scrap).toBe(0); // FACTORY_BUILD_COST_SCRAP, server/factories.ts
+
+  await closeAndWait(resumedCreator);
 });

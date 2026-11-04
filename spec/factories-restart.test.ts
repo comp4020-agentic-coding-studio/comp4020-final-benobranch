@@ -1,17 +1,21 @@
-// Checks ANU-015's production queue survives a real process restart
-// mid-build with correctly scaled elapsed progress — same style as
-// spec/territory.test.ts's and spec/persistence.test.ts's restart tests.
-// Spawns its own server (spec/global-setup.ts's APP_URL server can't be
-// restarted from inside a test) against a scratch port/DATA_DIR.
+// Checks ANU-022's auto-production cycles survive a real process restart
+// mid-cycle with correctly scaled elapsed progress (not reset or lost) —
+// same style as spec/territory.test.ts's and spec/persistence.test.ts's
+// restart tests. Unlike ANU-015's original scrap-queued model this
+// replaced, no action is needed to start production: a factory's cycles
+// begin the moment it exists (spawnFactories at kickoff), so this test just
+// has to let real time pass across a restart and check progress continued
+// from where it left off. Spawns its own server (spec/global-setup.ts's
+// APP_URL server can't be restarted from inside a test) against a scratch
+// port/DATA_DIR.
 import { afterAll, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
 import { spawnServer, type SpawnedServer } from "./lib/spawn-server.ts";
-import { openStore } from "../server/store.ts";
 
-const dataDir = mkdtempSync(join(tmpdir(), "anu015-factory-restart-"));
+const dataDir = mkdtempSync(join(tmpdir(), "anu022-factory-restart-"));
 const port = 8104;
 
 const servers: SpawnedServer[] = [];
@@ -64,12 +68,17 @@ async function closeAndWait(client: Client): Promise<void> {
   await new Promise((resolve) => client.ws.once("close", resolve));
 }
 
-it("a production queue survives a real process restart mid-build with correct elapsed progress, not reset or lost", async () => {
+interface FactoryMsgShape {
+  id: string;
+  production: { unitTypeKey: string; progressFraction: number }[];
+}
+
+it("a factory's auto-production cycle survives a real process restart mid-cycle with correct elapsed progress, not reset or lost", async () => {
   // A LOW scale (robot's 3000ms design duration stretched to 30 real
-  // seconds) ensures the build genuinely can't finish during the brief
+  // seconds) ensures the cycle genuinely can't finish during the brief
   // restart window — same reasoning spec/territory.test.ts's restart test
   // documents for its own scale choice, just in the opposite direction
-  // (that test speeds time up; this one needs it slowed down so a build in
+  // (that test speeds time up; this one needs it slowed down so a cycle in
   // progress stays in progress across the restart).
   const SCALE = 0.1;
   const first = await spawnServer({ port, dataDir, gameTimeScale: SCALE });
@@ -79,7 +88,6 @@ it("a production queue survives a real process restart mid-build with correct el
   const creator = await connect(first.baseUrl);
   const welcome = creator.messages.find((m) => m.type === "welcome")!;
   const creatorToken = welcome.token as string;
-  const creatorPlayerId = welcome.playerId as string;
   send(creator, { type: "createLobby", name: lobbyName, capacity: 4, callsign: "factory-creator" });
   const created = await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { name: string }).name === lobbyName);
   const lobbyId = (created.lobby as { lobbyId: string }).lobbyId;
@@ -87,47 +95,26 @@ it("a production queue survives a real process restart mid-build with correct el
   send(creator, { type: "startLobby" });
   await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { lobbyId: string; started: boolean }).lobbyId === lobbyId && (m.lobby as { started: boolean }).started);
 
+  // spawnFactories starts every buildable type's cycle immediately — no
+  // queueUnit action needed (ANU-022 removed it).
   const factoriesMsg = await waitFor(creator, (m) => m.type === "factories" && (m.lobbyId as string) === lobbyId);
-  const factoryId = (factoriesMsg.factories as { id: string }[])[0].id;
+  const factory = (factoriesMsg.factories as FactoryMsgShape[])[0];
+  const robotCycleBefore = factory.production.find((p) => p.unitTypeKey === "robot")!;
+  expect(robotCycleBefore.progressFraction).toBeLessThan(0.1); // just started
 
-  // No protocol message grants scrap directly (it's only earned via kills —
-  // see server/units.ts) — stop the server and credit it via a direct
-  // store connection against the same DATA_DIR file, same boundary
-  // spec/units.test.ts/spec/factories.test.ts use for store-level setup,
-  // just against the persisted file instead of :memory:.
+  await new Promise((r) => setTimeout(r, 300)); // ~0.3 real s = ~30ms game-time at scale 0.1 — negligible progress
+
   await closeAndWait(creator);
   await first.stop();
-  const setupStore = openStore(`${dataDir}/game.db`);
-  setupStore.db.prepare("UPDATE lobby_members SET scrap = scrap + ? WHERE lobby_id = ? AND player_id = ?").run(10, lobbyId, creatorPlayerId);
-  setupStore.close();
 
   const reopened = await spawnServer({ port, dataDir, gameTimeScale: SCALE });
   servers.push(reopened);
   const resumedCreator = await connect(reopened.baseUrl, creatorToken);
-
-  send(resumedCreator, { type: "queueUnit", factoryId, unitTypeKey: "robot" });
-  const queued = await waitFor(
-    resumedCreator,
-    (m) => m.type === "factories" && (m.factories as { id: string; queuedUnitTypeKey: string | null }[]).find((f) => f.id === factoryId)?.queuedUnitTypeKey === "robot",
-  );
-  const queueStartedBefore = (queued.factories as { id: string; queuedUnitTypeKey: string | null }[]).find((f) => f.id === factoryId)!;
-  expect(queueStartedBefore.queuedUnitTypeKey).toBe("robot");
-
-  await new Promise((r) => setTimeout(r, 300)); // ~0.3 real s = ~30ms game-time at scale 0.1 — negligible progress
+  const resumedFactoriesMsg = await waitFor(resumedCreator, (m) => m.type === "factories" && (m.lobbyId as string) === lobbyId);
+  const resumedFactory = (resumedFactoriesMsg.factories as FactoryMsgShape[])[0];
+  const robotCycleResumed = resumedFactory.production.find((p) => p.unitTypeKey === "robot")!;
+  expect(robotCycleResumed.progressFraction, "progress must have continued across the restart, not reset to 0").toBeGreaterThan(0);
+  expect(robotCycleResumed.progressFraction, "robot's 3000ms design duration at 0.1x scale is a 30 real-second cycle — nowhere near complete yet").toBeLessThan(0.5);
 
   await closeAndWait(resumedCreator);
-  await reopened.stop();
-
-  const second = await spawnServer({ port, dataDir, gameTimeScale: SCALE });
-  servers.push(second);
-
-  const reader = await connect(second.baseUrl, creatorToken);
-  const resumedFactories = await waitFor(reader, (m) => m.type === "factories" && (m.lobbyId as string) === lobbyId);
-  const resumedFactory = (resumedFactories.factories as { id: string; queuedUnitTypeKey: string | null; queueProgressFraction: number | null }[]).find((f) => f.id === factoryId)!;
-
-  expect(resumedFactory.queuedUnitTypeKey, "the queued build must survive the restart, not be reset or lost").toBe("robot");
-  expect(resumedFactory.queueProgressFraction, "progress should exist but be small — robot's 3000ms design duration at 0.1x scale is a 30 real-second build").not.toBeNull();
-  expect(resumedFactory.queueProgressFraction!).toBeLessThan(0.5);
-
-  await closeAndWait(reader);
 }, 20_000);

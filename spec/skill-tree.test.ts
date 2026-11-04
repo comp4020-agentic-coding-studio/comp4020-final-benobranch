@@ -7,13 +7,16 @@
 // server/skill-tree.ts against a real in-memory SQLite connection (same
 // pattern as spec/factories.test.ts / spec/perks.test.ts) rather than over
 // the WebSocket protocol, since TFLOPS balance has no read-back message.
+import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { openStore } from "../server/store.ts";
 import { createTerritory } from "../server/territory.ts";
 import { createUnits } from "../server/units.ts";
-import { createFactories } from "../server/factories.ts";
+import { createFactories, FACTORY_BUILD_COST_SCRAP } from "../server/factories.ts";
 import { createSkillTree } from "../server/skill-tree.ts";
 import { DEFAULT_PERK_MULTIPLIERS } from "../server/perks.ts";
+
+const mapData = JSON.parse(readFileSync("scripts/map/data/map.json", "utf8")) as { suburbs: { sal_code: string }[] };
 
 function setup() {
   const store = openStore(":memory:");
@@ -136,7 +139,7 @@ it("two near-simultaneous purchases of two different root nodes against a single
   store.close();
 });
 
-it("lean-production's factoryBuildCostMultiplier actually halves a drone's build cost through factories.queueUnit, not just a row in the perk table", () => {
+it("lean-production's factoryBuildCostMultiplier actually halves a new factory's scrap cost through factories.buildFactory, not just a row in the perk table (ANU-022: this node was repointed from unit cost to factory cost once units stopped costing scrap)", () => {
   const { store, skillTree, lobbyId, playerId } = setup();
   const territory = createTerritory(store.db);
   const units = createUnits(store.db);
@@ -144,20 +147,26 @@ it("lean-production's factoryBuildCostMultiplier actually halves a drone's build
   store.startLobby(lobbyId);
   territory.assignSpawnOwnership(lobbyId, [playerId]);
   factories.spawnFactories(lobbyId, [playerId]);
-  const factoryId = factories.getFactories(lobbyId)[0].id;
+  const existingSalCode = factories.getFactories(lobbyId)[0].sal_code;
   giveTflops(store, lobbyId, playerId, 1000);
   expect(skillTree.purchaseNode(lobbyId, playerId, "lean-production").ok).toBe(true);
 
-  store.db.prepare("UPDATE lobby_members SET scrap = scrap + 10 WHERE lobby_id = ? AND player_id = ?").run(lobbyId, playerId);
-  const result = factories.queueUnit(lobbyId, playerId, factoryId, "drone"); // base cost 2
+  const secondSalCode = mapData.suburbs.find((s) => s.sal_code !== existingSalCode)!.sal_code;
+  store.db.prepare(
+    "INSERT INTO suburb_ownership (lobby_id, sal_code, owner_player_id) VALUES (?, ?, ?) ON CONFLICT(lobby_id, sal_code) DO UPDATE SET owner_player_id = excluded.owner_player_id",
+  ).run(lobbyId, secondSalCode, playerId);
+
+  store.db.prepare("UPDATE lobby_members SET scrap = scrap + ? WHERE lobby_id = ? AND player_id = ?").run(FACTORY_BUILD_COST_SCRAP, lobbyId, playerId);
+  const result = factories.buildFactory(lobbyId, playerId, secondSalCode);
   expect(result.ok).toBe(true);
 
+  // FACTORY_BUILD_COST_SCRAP (20) at 0.5x should deduct exactly 10, not round back up.
   const economy = store.getMemberEconomy(lobbyId, playerId)!;
-  expect(economy.scrap, "drone cost (2) at 0.5x should deduct exactly 1, not round back up to 2").toBe(9);
+  expect(economy.scrap).toBe(FACTORY_BUILD_COST_SCRAP - 10);
   store.close();
 });
 
-it("the advanced-drone node's own unit_types row (seedSkillGatedUnitTypes) is gated by it end-to-end through factories.queueUnit", () => {
+it("the advanced-drone node's own unit_types row (seedSkillGatedUnitTypes) only starts auto-producing at a factory once unlocked", () => {
   const { store, skillTree, lobbyId, playerId } = setup();
   const territory = createTerritory(store.db);
   const units = createUnits(store.db);
@@ -165,22 +174,20 @@ it("the advanced-drone node's own unit_types row (seedSkillGatedUnitTypes) is ga
   store.startLobby(lobbyId);
   territory.assignSpawnOwnership(lobbyId, [playerId]);
   factories.spawnFactories(lobbyId, [playerId]);
-  const factoryId = factories.getFactories(lobbyId)[0].id;
-  store.db.prepare("UPDATE lobby_members SET scrap = scrap + 100 WHERE lobby_id = ? AND player_id = ?").run(lobbyId, playerId);
   giveTflops(store, lobbyId, playerId, 1000);
 
-  const lockedAttempt = factories.queueUnit(lobbyId, playerId, factoryId, "drone-mk2");
-  expect(lockedAttempt).toEqual({ ok: false, reason: "locked" });
+  const beforeUnlock = factories.getFactories(lobbyId)[0];
+  expect(beforeUnlock.production.map((p) => p.unitTypeKey)).not.toContain("drone-mk2");
 
   expect(skillTree.purchaseNode(lobbyId, playerId, "drone-chassis").ok).toBe(true);
   expect(skillTree.purchaseNode(lobbyId, playerId, "advanced-drone").ok).toBe(true);
 
-  const unlockedAttempt = factories.queueUnit(lobbyId, playerId, factoryId, "drone-mk2");
-  expect(unlockedAttempt.ok).toBe(true);
+  const afterUnlock = factories.getFactories(lobbyId)[0];
+  expect(afterUnlock.production.map((p) => p.unitTypeKey)).toContain("drone-mk2");
   store.close();
 });
 
-it("the gated advanced variant's base type (drone) is still buildable without the node, per issues/ANU-016.md's Done-when", () => {
+it("the gated advanced variant's base type (drone) still auto-produces without the node, per issues/ANU-016.md's Done-when", () => {
   const { store, lobbyId, playerId } = setup();
   const territory = createTerritory(store.db);
   const units = createUnits(store.db);
@@ -188,11 +195,9 @@ it("the gated advanced variant's base type (drone) is still buildable without th
   store.startLobby(lobbyId);
   territory.assignSpawnOwnership(lobbyId, [playerId]);
   factories.spawnFactories(lobbyId, [playerId]);
-  const factoryId = factories.getFactories(lobbyId)[0].id;
-  store.db.prepare("UPDATE lobby_members SET scrap = scrap + 100 WHERE lobby_id = ? AND player_id = ?").run(lobbyId, playerId);
 
-  const result = factories.queueUnit(lobbyId, playerId, factoryId, "drone");
-  expect(result.ok).toBe(true);
+  const factory = factories.getFactories(lobbyId)[0];
+  expect(factory.production.map((p) => p.unitTypeKey)).toContain("drone");
   store.close();
 });
 

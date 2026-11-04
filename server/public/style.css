@@ -487,7 +487,24 @@ button:not(:disabled):hover {
   padding: 1rem 0;
 }
 
+/* One row per unit type a factory auto-produces (ANU-022) — several of
+   these stack inside buildProductionDisplay's wrapper, since a factory
+   cycles every buildable type concurrently rather than queuing one. */
+.roster-list__progress-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  margin-top: 0.25rem;
+}
+
+.roster-list__progress-row span {
+  flex: 0 0 auto;
+  min-width: 3.5rem;
+}
+
 .roster-list__progress {
+  flex: 1 1 auto;
   height: 4px;
   background: var(--border);
   border-radius: 2px;

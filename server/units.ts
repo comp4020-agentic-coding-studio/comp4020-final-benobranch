@@ -50,15 +50,21 @@ export interface Units {
  * adjacency-restricted — a real tradeoff, not a cosmetic one, and wide
  * enough that attackSuburb's +/-20% damage variance can't blur drone vs.
  * robot hits into the same range.
+ *
+ * `scrap_value` (ANU-022 rename of the old `build_cost_scrap`) no longer
+ * gates building this type — units are free, auto-produced on a timer
+ * (server/factories.ts) — but still sets how much scrap destroying one of
+ * this type credits the killer (attackSuburb below), per PLAN.md's "scrap
+ * earned by destroying enemy units."
  */
 export function seedBaseUnitTypes(db: DatabaseSync): void {
   const upsert = db.prepare(`
-    INSERT INTO unit_types (key, health, damage, build_cost_scrap, build_time_ms, movement_mode, requires_skill_node)
+    INSERT INTO unit_types (key, health, damage, scrap_value, build_time_ms, movement_mode, requires_skill_node)
     VALUES (?, ?, ?, ?, ?, ?, NULL)
     ON CONFLICT(key) DO UPDATE SET
       health = excluded.health,
       damage = excluded.damage,
-      build_cost_scrap = excluded.build_cost_scrap,
+      scrap_value = excluded.scrap_value,
       build_time_ms = excluded.build_time_ms,
       movement_mode = excluded.movement_mode
   `);
@@ -67,15 +73,16 @@ export function seedBaseUnitTypes(db: DatabaseSync): void {
 }
 
 /**
- * Every unit_types row, for the client's build-cost catalog (ANU-020) — a
- * plain export rather than a method on `Units`, same convention as
- * seedBaseUnitTypes above, since it's reference data with no per-lobby
- * state to close over.
+ * Every unit_types row, for the client's unit catalog (ANU-020, repurposed
+ * by ANU-022 from a build-cost listing to a stats-only reference now that
+ * units aren't individually built/bought) — a plain export rather than a
+ * method on `Units`, same convention as seedBaseUnitTypes above, since it's
+ * reference data with no per-lobby state to close over.
  */
 export function listUnitTypes(db: DatabaseSync): UnitTypeCatalogEntry[] {
   const rows = db
     .prepare(
-      `SELECT key, health, damage, build_cost_scrap AS buildCostScrap, build_time_ms AS buildTimeMs,
+      `SELECT key, health, damage, scrap_value AS scrapValue, build_time_ms AS buildTimeMs,
               movement_mode AS movementMode, requires_skill_node AS requiresSkillNode
        FROM unit_types`,
     )
@@ -86,7 +93,7 @@ export function listUnitTypes(db: DatabaseSync): UnitTypeCatalogEntry[] {
 interface UnitTypeRow {
   health: number;
   damage: number;
-  build_cost_scrap: number;
+  scrap_value: number;
   movement_mode: "fly" | "ground";
 }
 
@@ -149,7 +156,7 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
   const perks = createPerkHook(db);
 
   const selectUnitType = db.prepare(
-    "SELECT health, damage, build_cost_scrap, movement_mode FROM unit_types WHERE key = ?",
+    "SELECT health, damage, scrap_value, movement_mode FROM unit_types WHERE key = ?",
   );
   const insertUnit = db.prepare(`
     INSERT INTO units (id, lobby_id, owner_player_id, sal_code, unit_type_key, health, spawned_at)
@@ -273,7 +280,7 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
 
       deleteUnit.run(defender.id);
       const scrapPerKillMultiplier = perks.getPerkMultipliers(lobbyId, ownerPlayerId).scrapPerKillMultiplier;
-      const scrapCredited = Math.round(defenderType.build_cost_scrap * scrapPerKillMultiplier);
+      const scrapCredited = Math.round(defenderType.scrap_value * scrapPerKillMultiplier);
       creditScrap.run(scrapCredited, lobbyId, ownerPlayerId);
       updateUnitSalCode.run(salCode, unitId); // the attacker advances into the suburb it just cleared
       return {

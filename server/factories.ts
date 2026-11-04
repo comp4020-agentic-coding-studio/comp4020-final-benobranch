@@ -1,15 +1,27 @@
-// Factory production queue (ANU-015), on top of ANU-013's `factories` table
-// and ANU-014's `unit_types`/occupancy primitive. Per issues/ANU-013.md's
-// file-layout convention: server-side logic for this system lives in its
-// own module.
+// Factory production (ANU-015, reworked by ANU-022), on top of ANU-013's
+// `factories` table and ANU-014's `unit_types`/occupancy primitive. Per
+// issues/ANU-013.md's file-layout convention: server-side logic for this
+// system lives in its own module.
+//
+// ANU-022 ("I do not want [units] to be created using scrap. I want them to
+// be automatically made based on a timer... The scrap should only be for
+// building more factories") replaced ANU-015's player-picked, scrap-paid
+// single production queue with this: every factory auto-produces EVERY
+// buildable unit type concurrently, each on its own independent timer, with
+// no player choice and no scrap cost. "Buildable" for a given factory means
+// every ungated `unit_types` row, plus any `requires_skill_node`-gated row
+// the factory's current owner has unlocked — confirmed with the user via
+// AskUserQuestion to be built modular, so a future unit_types row (gated or
+// not) starts auto-producing at every factory with no code change here (see
+// getBuildableUnitTypes below, which enumerates unit_types rather than
+// naming "drone"/"robot").
 //
 // Two design calls flagged in issues/ANU-013.md's Notes, confirmed with the
-// user via AskUserQuestion before this module was written (see
-// issues/ANU-015.md's Resolution):
+// user via AskUserQuestion before ANU-015 (and unchanged by ANU-022):
 //   1. A second (and later) factory can be built in ANY suburb the player
 //      currently owns — no adjacency-to-an-existing-factory restriction.
 //   2. Capturing a suburb TRANSFERS the factory standing in it to the
-//      capturing player (including any in-progress build) rather than
+//      capturing player (including any in-progress production) rather than
 //      destroying it — see transferFactoryOwnership, which ANU-017's
 //      capture state machine calls once a capture completes.
 import type { DatabaseSync } from "node:sqlite";
@@ -18,31 +30,26 @@ import { validSalCodes } from "./map-data.ts";
 import { createPerkHook } from "./perks.ts";
 import { elapsedMs, nowIso } from "./time.ts";
 import type { Units } from "./units.ts";
-import type { FactoryState } from "./protocol.ts";
+import type { FactoryState, FactoryProductionCycle } from "./protocol.ts";
 
 /**
  * Flat scrap cost to build an additional factory (first one per player is
  * free, placed at kickoff — see spawnFactories). Not specified by the
  * user's request beyond "can build more," so a value had to be chosen: set
- * at 5-10x a single base unit's build cost (drone 2 scrap, robot 4 scrap —
- * server/units.ts's seedBaseUnitTypes) so expanding production capacity is
- * a meaningful economic investment, not a trivial add-on. Deliberately NOT
- * scaled by `factoryBuildCostMultiplier` — that perk is read elsewhere
- * (queueUnit, below) for the cost of the UNITS a factory produces, per
- * issues/ANU-015.md citing it from the "production queue" bullet; a skill
- * tree node that makes units cheaper to build isn't the same thing as
- * making a new factory cheaper to build, and nothing in ANU-016's roster
- * names the latter.
+ * at 5-10x a single base unit's old build cost (drone 2 scrap, robot 4
+ * scrap — server/units.ts's seedBaseUnitTypes, before ANU-022 repurposed
+ * that column to `scrap_value`) so expanding production capacity is a
+ * meaningful economic investment, not a trivial add-on. Scaled by
+ * `factoryBuildCostMultiplier` (below) — as of ANU-022 this is the ONLY
+ * scrap-spending action left, so the skill-tree node that used to cheapen a
+ * unit's build cost now cheapens this instead (issues/ANU-022.md's
+ * Resolution; the perk hook's key name is unchanged, only what it scales).
  */
 export const FACTORY_BUILD_COST_SCRAP = 20;
 
 export type BuildFactoryResult =
   | { ok: true; factory: FactoryState }
   | { ok: false; reason: "unknown-suburb" | "not-owner" | "already-exists" | "insufficient-scrap" };
-
-export type QueueUnitResult =
-  | { ok: true; factory: FactoryState }
-  | { ok: false; reason: "unknown-factory" | "not-owner" | "busy" | "unknown-unit-type" | "locked" | "insufficient-scrap" };
 
 export interface Factories {
   /**
@@ -57,15 +64,14 @@ export interface Factories {
    */
   spawnFactories(lobbyId: string, memberPlayerIds: string[]): void;
   buildFactory(lobbyId: string, ownerPlayerId: string, salCode: string): BuildFactoryResult;
-  queueUnit(lobbyId: string, ownerPlayerId: string, factoryId: string, unitTypeKey: string): QueueUnitResult;
   /** ANU-017's capture state machine calls this once a capture completes. */
   transferFactoryOwnership(lobbyId: string, salCode: string, newOwnerPlayerId: string): void;
-  /** Settles any builds that have completed, then returns current state for broadcast. */
+  /** Settles any production cycles that have completed, then returns current state for broadcast. */
   getFactories(lobbyId: string): FactoryState[];
 }
 
 interface UnitTypeRow {
-  build_cost_scrap: number;
+  key: string;
   build_time_ms: number;
   requires_skill_node: string | null;
 }
@@ -74,25 +80,26 @@ interface FactoryRow {
   id: string;
   sal_code: string;
   ownerPlayerId: string;
-  queuedUnitTypeKey: string | null;
-  queueStartedAt: string | null;
+}
+
+interface ProductionCycleRow {
+  cycleStartedAt: string;
 }
 
 export function createFactories(db: DatabaseSync, units: Units): Factories {
   const perks = createPerkHook(db);
 
-  const selectUnitType = db.prepare(
-    "SELECT build_cost_scrap, build_time_ms, requires_skill_node FROM unit_types WHERE key = ?",
+  const selectAllUnitTypes = db.prepare(
+    "SELECT key, build_time_ms, requires_skill_node FROM unit_types",
+  );
+  const hasUnlockedNode = db.prepare(
+    "SELECT 1 FROM skill_nodes WHERE lobby_id = ? AND player_id = ? AND node_id = ?",
   );
   const insertFactory = db.prepare(
     "INSERT INTO factories (id, lobby_id, sal_code, owner_player_id) VALUES (?, ?, ?, ?)",
   );
-  const selectFactory = db.prepare(`
-    SELECT id, sal_code, owner_player_id AS ownerPlayerId, queued_unit_type_key AS queuedUnitTypeKey, queue_started_at AS queueStartedAt
-    FROM factories WHERE id = ? AND lobby_id = ?
-  `);
   const selectFactoriesInLobby = db.prepare(`
-    SELECT id, sal_code, owner_player_id AS ownerPlayerId, queued_unit_type_key AS queuedUnitTypeKey, queue_started_at AS queueStartedAt
+    SELECT id, sal_code, owner_player_id AS ownerPlayerId
     FROM factories WHERE lobby_id = ?
   `);
   const selectFactoryBySuburb = db.prepare("SELECT id FROM factories WHERE lobby_id = ? AND sal_code = ?");
@@ -102,22 +109,32 @@ export function createFactories(db: DatabaseSync, units: Units): Factories {
   const selectSuburbOwner = db.prepare(
     "SELECT owner_player_id AS ownerPlayerId FROM suburb_ownership WHERE lobby_id = ? AND sal_code = ?",
   );
-  const hasUnlockedNode = db.prepare(
-    "SELECT 1 FROM skill_nodes WHERE lobby_id = ? AND player_id = ? AND node_id = ?",
-  );
   // Same WHERE-guarded UPDATE shape as store.ts's startLobby (`WHERE started
   // = 0`) and units.ts's scrap credit — a single synchronous statement with
   // no `await` between the balance check and the deduction, so two
-  // near-simultaneous queue/build requests against the same balance can't
+  // near-simultaneous buildFactory requests against the same balance can't
   // both read "affordable" before either writes (ADR 0001).
   const deductScrapIfAffordable = db.prepare(
     "UPDATE lobby_members SET scrap = scrap - ? WHERE lobby_id = ? AND player_id = ? AND scrap >= ?",
   );
-  const setQueue = db.prepare("UPDATE factories SET queued_unit_type_key = ?, queue_started_at = ? WHERE id = ?");
-  const clearQueue = db.prepare("UPDATE factories SET queued_unit_type_key = NULL, queue_started_at = NULL WHERE id = ?");
   const updateFactoryOwner = db.prepare("UPDATE factories SET owner_player_id = ? WHERE lobby_id = ? AND sal_code = ?");
 
-  /** Build-speed-multiplier-adjusted duration a queued unit needs before it's complete. */
+  const selectCycle = db.prepare(
+    "SELECT cycle_started_at AS cycleStartedAt FROM factory_production WHERE factory_id = ? AND unit_type_key = ?",
+  );
+  // A factory producing a type for the first time (just built, or a
+  // skill-tree node just unlocked a new gated type) has no cycle row yet —
+  // lazily create one, started now, rather than requiring every factory x
+  // unit-type pairing to be pre-seeded. This is what makes adding a new
+  // unit_types row "just work" at every existing factory with no migration.
+  const insertCycleIfMissing = db.prepare(
+    "INSERT OR IGNORE INTO factory_production (factory_id, unit_type_key, cycle_started_at) VALUES (?, ?, ?)",
+  );
+  const restartCycle = db.prepare(
+    "UPDATE factory_production SET cycle_started_at = ? WHERE factory_id = ? AND unit_type_key = ?",
+  );
+
+  /** Build-speed-multiplier-adjusted duration a production cycle needs before it completes. */
   function effectiveBuildTimeMs(ownerPlayerId: string, lobbyId: string, baseBuildTimeMs: number): number {
     const speedMultiplier = perks.getPerkMultipliers(lobbyId, ownerPlayerId).factoryBuildSpeedMultiplier;
     const safeSpeedMultiplier = speedMultiplier > 0 ? speedMultiplier : 1; // defend against a malformed perk value dividing by zero
@@ -125,45 +142,64 @@ export function createFactories(db: DatabaseSync, units: Units): Factories {
   }
 
   /**
-   * Finds every factory in this lobby whose queued build has reached its
-   * (speed-multiplier-adjusted) duration, places the resulting unit via
-   * units.ts's occupancy primitive at the factory's suburb for the
-   * factory's CURRENT owner (not whoever queued it — a captured factory's
-   * in-progress build completes for its new owner, per this issue's
-   * confirmed capture rule), and clears the queue. Called before every
-   * read/broadcast and from index.ts's ~1s ticker — never an armed
-   * setTimeout (ADR 0001's stored-timestamp rule).
+   * Every unit_types row a factory owned by `ownerPlayerId` currently
+   * auto-produces: every ungated row, plus every `requires_skill_node` row
+   * this specific owner has unlocked. Evaluated per-owner (not cached)
+   * since unlocks are per-player and a factory's owner can change
+   * (transferFactoryOwnership) or gain new unlocks between calls.
    */
-  function settle(lobbyId: string): void {
-    const rows = selectFactoriesInLobby.all(lobbyId) as unknown as FactoryRow[];
-    for (const row of rows) {
-      if (!row.queuedUnitTypeKey || !row.queueStartedAt) continue;
-      const unitType = selectUnitType.get(row.queuedUnitTypeKey) as unknown as UnitTypeRow | undefined;
-      if (!unitType) continue; // shouldn't happen — queued against a since-removed unit type
-      const duration = effectiveBuildTimeMs(row.ownerPlayerId, lobbyId, unitType.build_time_ms);
-      if (elapsedMs(row.queueStartedAt) >= duration) {
-        units.placeUnit(lobbyId, row.ownerPlayerId, row.sal_code, row.queuedUnitTypeKey);
-        clearQueue.run(row.id);
+  function getBuildableUnitTypes(lobbyId: string, ownerPlayerId: string): UnitTypeRow[] {
+    const all = selectAllUnitTypes.all() as unknown as UnitTypeRow[];
+    return all.filter(
+      (t) => t.requires_skill_node === null || hasUnlockedNode.get(lobbyId, ownerPlayerId, t.requires_skill_node),
+    );
+  }
+
+  /**
+   * Ensures every buildable type at this factory has a cycle row (lazily
+   * creating one for any new/newly-unlocked type), then completes any cycle
+   * whose (speed-multiplier-adjusted) duration has elapsed: places the
+   * resulting unit via units.ts's occupancy primitive at the factory's
+   * suburb for the factory's CURRENT owner (not whoever started the cycle
+   * — a captured factory's production continues for its new owner, per
+   * ANU-015's confirmed capture rule, which ANU-022 keeps), and restarts
+   * that type's cycle immediately. Called before every read/broadcast and
+   * from index.ts's ~1s ticker — never an armed setTimeout (ADR 0001's
+   * stored-timestamp rule).
+   */
+  function settleFactory(lobbyId: string, factory: FactoryRow): void {
+    const buildableTypes = getBuildableUnitTypes(lobbyId, factory.ownerPlayerId);
+    for (const unitType of buildableTypes) {
+      const cycle = selectCycle.get(factory.id, unitType.key) as ProductionCycleRow | undefined;
+      if (!cycle) {
+        insertCycleIfMissing.run(factory.id, unitType.key, nowIso());
+        continue; // just started this instant — no progress to settle yet
+      }
+      const duration = effectiveBuildTimeMs(factory.ownerPlayerId, lobbyId, unitType.build_time_ms);
+      if (elapsedMs(cycle.cycleStartedAt) >= duration) {
+        units.placeUnit(lobbyId, factory.ownerPlayerId, factory.sal_code, unitType.key);
+        restartCycle.run(nowIso(), factory.id, unitType.key);
       }
     }
   }
 
+  function settle(lobbyId: string): void {
+    const rows = selectFactoriesInLobby.all(lobbyId) as unknown as FactoryRow[];
+    for (const row of rows) settleFactory(lobbyId, row);
+  }
+
   function toFactoryState(lobbyId: string, row: FactoryRow): FactoryState {
-    if (!row.queuedUnitTypeKey || !row.queueStartedAt) {
-      return { id: row.id, sal_code: row.sal_code, ownerPlayerId: row.ownerPlayerId, queuedUnitTypeKey: null, queueProgressFraction: null };
-    }
-    const unitType = selectUnitType.get(row.queuedUnitTypeKey) as unknown as UnitTypeRow | undefined;
-    // Should always resolve (settle() runs first and clears completed/orphaned queues), but
-    // degrade to "just queued" rather than throw if a unit type vanished mid-build.
-    const duration = unitType ? effectiveBuildTimeMs(row.ownerPlayerId, lobbyId, unitType.build_time_ms) : 1;
-    const fraction = unitType ? Math.max(0, Math.min(1, elapsedMs(row.queueStartedAt) / duration)) : 0;
-    return {
-      id: row.id,
-      sal_code: row.sal_code,
-      ownerPlayerId: row.ownerPlayerId,
-      queuedUnitTypeKey: row.queuedUnitTypeKey,
-      queueProgressFraction: fraction,
-    };
+    const buildableTypes = getBuildableUnitTypes(lobbyId, row.ownerPlayerId);
+    const production: FactoryProductionCycle[] = buildableTypes.map((unitType) => {
+      const cycle = selectCycle.get(row.id, unitType.key) as ProductionCycleRow | undefined;
+      // settleFactory (called by getFactories before this) inserts a cycle
+      // row for every buildable type, so this should always resolve — but
+      // degrade to "just started" rather than throw if it somehow doesn't.
+      const duration = effectiveBuildTimeMs(row.ownerPlayerId, lobbyId, unitType.build_time_ms);
+      const fraction = cycle ? Math.max(0, Math.min(1, elapsedMs(cycle.cycleStartedAt) / duration)) : 0;
+      return { unitTypeKey: unitType.key, progressFraction: fraction };
+    });
+    return { id: row.id, sal_code: row.sal_code, ownerPlayerId: row.ownerPlayerId, production };
   }
 
   return {
@@ -181,40 +217,15 @@ export function createFactories(db: DatabaseSync, units: Units): Factories {
       if (!owner || owner.ownerPlayerId !== ownerPlayerId) return { ok: false, reason: "not-owner" };
       if (selectFactoryBySuburb.get(lobbyId, salCode)) return { ok: false, reason: "already-exists" };
 
-      const result = deductScrapIfAffordable.run(FACTORY_BUILD_COST_SCRAP, lobbyId, ownerPlayerId, FACTORY_BUILD_COST_SCRAP);
-      if (result.changes === 0) return { ok: false, reason: "insufficient-scrap" };
-
-      const id = randomUUID();
-      insertFactory.run(id, lobbyId, salCode, ownerPlayerId);
-      return { ok: true, factory: { id, sal_code: salCode, ownerPlayerId, queuedUnitTypeKey: null, queueProgressFraction: null } };
-    },
-
-    queueUnit(lobbyId, ownerPlayerId, factoryId, unitTypeKey) {
-      settle(lobbyId); // free up a factory whose previous build just finished before judging "busy"
-
-      const row = selectFactory.get(factoryId, lobbyId) as unknown as FactoryRow | undefined;
-      if (!row) return { ok: false, reason: "unknown-factory" };
-      if (row.ownerPlayerId !== ownerPlayerId) return { ok: false, reason: "not-owner" };
-      if (row.queuedUnitTypeKey) return { ok: false, reason: "busy" };
-
-      const unitType = selectUnitType.get(unitTypeKey) as unknown as UnitTypeRow | undefined;
-      if (!unitType) return { ok: false, reason: "unknown-unit-type" };
-      if (unitType.requires_skill_node && !hasUnlockedNode.get(lobbyId, ownerPlayerId, unitType.requires_skill_node)) {
-        return { ok: false, reason: "locked" };
-      }
-
       const costMultiplier = perks.getPerkMultipliers(lobbyId, ownerPlayerId).factoryBuildCostMultiplier;
-      const cost = Math.max(0, Math.round(unitType.build_cost_scrap * costMultiplier));
+      const cost = Math.max(0, Math.round(FACTORY_BUILD_COST_SCRAP * costMultiplier));
 
       const result = deductScrapIfAffordable.run(cost, lobbyId, ownerPlayerId, cost);
       if (result.changes === 0) return { ok: false, reason: "insufficient-scrap" };
 
-      const queueStartedAt = nowIso();
-      setQueue.run(unitTypeKey, queueStartedAt, factoryId);
-      return {
-        ok: true,
-        factory: { id: row.id, sal_code: row.sal_code, ownerPlayerId, queuedUnitTypeKey: unitTypeKey, queueProgressFraction: 0 },
-      };
+      const id = randomUUID();
+      insertFactory.run(id, lobbyId, salCode, ownerPlayerId);
+      return { ok: true, factory: toFactoryState(lobbyId, { id, sal_code: salCode, ownerPlayerId }) };
     },
 
     transferFactoryOwnership(lobbyId, salCode, newOwnerPlayerId) {

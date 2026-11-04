@@ -14,7 +14,6 @@
  * @property {OccupantUnit[]} occupants
  * @property {FactoryState | null} factory
  * @property {boolean} canBuildFactory
- * @property {boolean} canQueueUnit
  * @property {OccupantUnit[]} sendableUnits
  */
 
@@ -43,7 +42,6 @@ export function suburbDetailViewModel({ sal_code, ownership, occupancy, factorie
     occupants,
     factory,
     canBuildFactory: isOwnedByMe && !factory,
-    canQueueUnit: isOwnedByMe && !!factory && factory.ownerPlayerId === myPlayerId && factory.queuedUnitTypeKey === null,
     // Any suburb is a valid "send unit here" target — attackSuburb's
     // reachability rule (server/units.ts) is authoritative; the client just
     // offers the player's own units and lets the server accept/reject.

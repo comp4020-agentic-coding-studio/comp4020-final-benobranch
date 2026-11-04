@@ -5,7 +5,13 @@
 // protocol-only until all four ANU-013-downstream systems land. Plain JS
 // (browsers can't run TypeScript, no bundler) typed against
 // server/protocol.ts via JSDoc, same pattern as unit-visual.js.
+//
+// ANU-022 reworked FactoryState's single `queuedUnitTypeKey`/
+// `queueProgressFraction` slot into a `production` array (every buildable
+// unit type auto-cycles concurrently, with no player-picked queue) — this
+// visual follows that shape rather than picking one type to represent.
 /** @typedef {import("../protocol.ts").FactoryState} FactoryState */
+/** @typedef {import("../protocol.ts").FactoryProductionCycle} FactoryProductionCycle */
 
 /**
  * @typedef {object} FactoryVisual
@@ -13,9 +19,9 @@
  *   conveyed by ownerColor, not a second icon (color is reserved for
  *   ownership per issues/ANU-013.md, same convention unit-visual.js follows).
  * @property {string} ownerColor
- * @property {number | null} queueProgressFraction - 0 (just queued) to 1
- *   (about to complete); null while idle, so callers can distinguish
- *   "no progress yet" from "nothing queued" rather than both rendering as 0.
+ * @property {FactoryProductionCycle[]} production - every buildable unit
+ *   type's current cycle progress (0 just started, 1 about to complete),
+ *   passed through unchanged from FactoryState.
  */
 
 /**
@@ -29,6 +35,6 @@ export function factoryVisual(factory, ownerColor) {
   return {
     icon: "factory",
     ownerColor,
-    queueProgressFraction: factory.queueProgressFraction,
+    production: factory.production,
   };
 }

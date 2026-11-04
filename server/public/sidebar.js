@@ -8,9 +8,11 @@
 //
 // GUI boundary (issues/ANU-013.md's Notes, overridden for units/factories
 // specifically per issues/ANU-020.md's Why): moveUnit/attackSuburb/
-// buildFactory/queueUnit get real controls here. No control exists for
-// placeUnit (a free-unit-anywhere primitive that predates the scrap
-// economy) and none for the skill tree or zone capture (out of scope).
+// buildFactory get real controls here. No control exists for placeUnit (a
+// free-unit-anywhere primitive that predates the scrap economy), queueUnit
+// (removed by ANU-022 — units auto-produce on a timer, not a player-picked
+// queue; the factory panel now just shows read-only per-type progress), or
+// the skill tree/zone capture (out of scope).
 /** @typedef {import("../protocol.ts").PlayerPresence} PlayerPresence */
 /** @typedef {import("../protocol.ts").LobbyState} LobbyState */
 /** @typedef {import("../protocol.ts").OccupantUnit} OccupantUnit */
@@ -68,22 +70,29 @@ function showTab(/** @type {"territory" | "units" | "factories"} */ tab) {
 }
 
 /**
- * @param {string} factoryId
- * @param {UnitTypeCatalogEntry[]} unitCatalog
- * @param {number} scrap
+ * Read-only per-type production progress for one factory (ANU-022) — no
+ * control here triggers anything; a factory auto-produces every buildable
+ * type on its own timer with no player choice, so this just reflects
+ * FactoryState.production unchanged (via factoryVisual's pass-through).
+ * @param {import("../protocol.ts").FactoryProductionCycle[]} production
  */
-function buildQueueControls(factoryId, unitCatalog, scrap) {
+function buildProductionDisplay(production) {
   const wrap = document.createElement("div");
   wrap.className = "suburb-detail__actions";
-  for (const unitType of unitCatalog) {
-    if (unitType.requiresSkillNode) continue; // not unlockable from this GUI yet — see issues/ANU-020.md
-    const button = document.createElement("button");
-    button.type = "button";
-    const affordable = scrap >= unitType.buildCostScrap;
-    button.disabled = !affordable;
-    button.textContent = `Build ${unitTypeLabel(unitType.key)} (${unitType.buildCostScrap} scrap)`;
-    button.addEventListener("click", () => send({ type: "queueUnit", factoryId, unitTypeKey: unitType.key }));
-    wrap.appendChild(button);
+  for (const cycle of production) {
+    const row = document.createElement("div");
+    row.className = "roster-list__progress-row";
+    const label = document.createElement("span");
+    label.textContent = unitTypeLabel(cycle.unitTypeKey);
+    row.appendChild(label);
+    const progress = document.createElement("div");
+    progress.className = "roster-list__progress";
+    const fill = document.createElement("div");
+    fill.className = "roster-list__progress-fill";
+    fill.style.width = `${Math.round(cycle.progressFraction * 100)}%`;
+    progress.appendChild(fill);
+    row.appendChild(progress);
+    wrap.appendChild(row);
   }
   return wrap;
 }
@@ -91,7 +100,7 @@ function buildQueueControls(factoryId, unitCatalog, scrap) {
 function renderSuburbDetail() {
   suburbDetailEl.replaceChildren();
   if (!currentState || !currentSelection || currentSelection.type !== "suburb") return;
-  const { lobby, occupancy, factories, unitCatalog, economy, myPlayerId } = currentState;
+  const { lobby, occupancy, factories, myPlayerId } = currentState;
   const sal_code = currentSelection.sal_code;
   const detail = suburbDetailViewModel({ sal_code, ownership: lobby.ownership, occupancy, factories, members: lobby.members, myPlayerId });
 
@@ -135,12 +144,10 @@ function renderSuburbDetail() {
   if (detail.factory) {
     const factoryLine = document.createElement("p");
     const factoryOwner = lobby.members.find((m) => m.playerId === detail.factory?.ownerPlayerId);
-    factoryLine.textContent = `Factory (${factoryOwner?.name ?? "unknown"})${
-      detail.factory.queuedUnitTypeKey ? ` — building ${unitTypeLabel(detail.factory.queuedUnitTypeKey)}` : ""
-    }`;
+    factoryLine.textContent = `Factory (${factoryOwner?.name ?? "unknown"})`;
     actions.appendChild(factoryLine);
-    if (detail.canQueueUnit) {
-      actions.appendChild(buildQueueControls(detail.factory.id, unitCatalog, economy.scrap));
+    if (detail.factory.ownerPlayerId === myPlayerId) {
+      actions.appendChild(buildProductionDisplay(detail.factory.production));
     }
   }
 
@@ -186,7 +193,7 @@ function renderUnitList() {
 
 function renderFactoryList() {
   if (!currentState) return;
-  const { factories, unitCatalog, economy, myPlayerId } = currentState;
+  const { factories, myPlayerId } = currentState;
   const mine = factories.filter((f) => f.ownerPlayerId === myPlayerId);
   if (mine.length === 0) {
     const empty = document.createElement("li");
@@ -204,17 +211,7 @@ function renderFactoryList() {
       const location = document.createElement("span");
       location.textContent = `Factory @ ${factory.sal_code}`;
       li.appendChild(location);
-      if (factory.queuedUnitTypeKey && factory.queueProgressFraction !== null) {
-        const progress = document.createElement("div");
-        progress.className = "roster-list__progress";
-        const fill = document.createElement("div");
-        fill.className = "roster-list__progress-fill";
-        fill.style.width = `${Math.round(factory.queueProgressFraction * 100)}%`;
-        progress.appendChild(fill);
-        li.appendChild(progress);
-      } else {
-        li.appendChild(buildQueueControls(factory.id, unitCatalog, economy.scrap));
-      }
+      li.appendChild(buildProductionDisplay(factory.production));
       return li;
     }),
   );

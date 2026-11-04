@@ -212,14 +212,15 @@ const heartbeat = setInterval(() => {
 }, 30_000);
 heartbeat.unref();
 
-// A wake-up to settle+broadcast factory queues that finish with nobody
-// having sent a message in the meantime — holds no build state itself (that
-// lives in `factories`' stored queue_started_at timestamps, read via
-// elapsedMs), so it's not the "armed timer" ADR 0001's stored-timestamp rule
-// warns against: if this tick never fired (e.g. the machine was asleep),
-// the next getFactories/hello call still computes the right elapsed
-// progress from the stored timestamp. Only ticks lobbies with at least one
-// live connection, matching spec/realtime.test.ts's ~1s broadcast target.
+// A wake-up to settle+broadcast factory production cycles that complete
+// with nobody having sent a message in the meantime — holds no build state
+// itself (that lives in `factory_production`'s stored cycle_started_at
+// timestamps, read via elapsedMs), so it's not the "armed timer" ADR 0001's
+// stored-timestamp rule warns against: if this tick never fired (e.g. the
+// machine was asleep), the next getFactories/hello call still computes the
+// right elapsed progress from the stored timestamp. Only ticks lobbies with
+// at least one live connection, matching spec/realtime.test.ts's ~1s
+// broadcast target.
 const factoryTicker = setInterval(() => {
   const liveLobbyIds = new Set([...sockets.values()].map((m) => m.lobbyId).filter((id): id is string => id !== null));
   for (const lobbyId of liveLobbyIds) {
@@ -367,18 +368,6 @@ wss.on("connection", (socket) => {
       }
       broadcastFactories(meta.lobbyId);
       sendEconomyToPlayer(meta.lobbyId, meta.playerId); // deducted FACTORY_BUILD_COST_SCRAP
-      return;
-    }
-
-    if (message.type === "queueUnit") {
-      if (!meta.lobbyId || !store.getLobby(meta.lobbyId)?.started) return;
-      const result = factories.queueUnit(meta.lobbyId, meta.playerId, message.factoryId, message.unitTypeKey);
-      if (!result.ok) {
-        send(socket, { type: "error", message: `queueUnit: ${result.reason}` });
-        return;
-      }
-      broadcastFactories(meta.lobbyId);
-      sendEconomyToPlayer(meta.lobbyId, meta.playerId); // deducted the unit's build cost
       return;
     }
 

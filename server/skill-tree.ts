@@ -30,12 +30,14 @@ export type { SkillNodeDef };
  * for real; wiring it to an actual effect is left for whichever future issue
  * implements TFLOPS flow.
  *
- * lean-production is 0.5, not a more generic-looking 0.75: factories.ts's
- * queueUnit rounds `build_cost_scrap * costMultiplier` to the nearest whole
- * scrap, and a drone's cost (2) times 0.75 rounds right back to 2 — a
- * "cheaper production" node that doesn't actually make the cheapest, most
- * commonly built unit any cheaper. 0.5 halves both the drone (2 -> 1) and
- * robot (4 -> 2) costs exactly, with no rounding artifact either way.
+ * lean-production's factoryBuildCostMultiplier originally cheapened a
+ * queued unit's scrap cost (ANU-015/ANU-016). ANU-022 removed per-unit
+ * scrap costs entirely (units auto-produce free, on a timer) and scrap now
+ * only funds building a new factory (server/factories.ts's
+ * FACTORY_BUILD_COST_SCRAP) — so this multiplier was repointed to scale
+ * that instead, keeping the node meaningful without adding a new perk-hook
+ * key (issues/ANU-022.md's Resolution). 0.5 halves FACTORY_BUILD_COST_SCRAP
+ * (20 -> 10) with no rounding artifact.
  */
 const PERK_EFFECTS: Partial<Record<string, { key: keyof PerkMultipliers; value: number }>> = {
   "better-fabs": { key: "factoryBuildSpeedMultiplier", value: 1.5 },
@@ -79,16 +81,19 @@ export interface SkillTree {
  * stat line (health 1.67x for both; damage 1.5x drone, 1.75x robot) — a real
  * upgrade, not a rounding-error difference, while staying below the
  * base-to-base 2x drone/robot ratio ([[ANU-014]]'s Resolution) so "advanced
- * drone" doesn't just become a reskinned robot.
+ * drone" doesn't just become a reskinned robot. The fourth seeded column
+ * (`scrap_value`, ANU-022's rename of the old `build_cost_scrap`) no longer
+ * gates building this type — it's what destroying one of it credits the
+ * killer, scaled up from the base type to match its higher stats.
  */
 export function seedSkillGatedUnitTypes(db: DatabaseSync): void {
   const upsert = db.prepare(`
-    INSERT INTO unit_types (key, health, damage, build_cost_scrap, build_time_ms, movement_mode, requires_skill_node)
+    INSERT INTO unit_types (key, health, damage, scrap_value, build_time_ms, movement_mode, requires_skill_node)
     VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET
       health = excluded.health,
       damage = excluded.damage,
-      build_cost_scrap = excluded.build_cost_scrap,
+      scrap_value = excluded.scrap_value,
       build_time_ms = excluded.build_time_ms,
       movement_mode = excluded.movement_mode,
       requires_skill_node = excluded.requires_skill_node
