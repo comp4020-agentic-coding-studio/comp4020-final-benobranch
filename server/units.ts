@@ -69,7 +69,7 @@ export function seedBaseUnitTypes(db: DatabaseSync): void {
       movement_mode = excluded.movement_mode
   `);
   upsert.run("drone", 3, 2, 2, 30_000, "fly");
-  upsert.run("robot", 6, 4, 4, 120_000, "ground");
+  upsert.run("robot", 10, 4, 4, 120_000, "ground");
 }
 
 /**
