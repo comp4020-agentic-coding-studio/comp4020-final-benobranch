@@ -26,6 +26,7 @@
 import { unitVisual } from "./unit-visual.js";
 import { factoryVisual } from "./factory-visual.js";
 import { DATA_CENTER_TIER_ICONS, DATA_CENTER_TIER_MARKER_SIZE } from "./data-center-visual.js";
+import { UNIT_ARCHETYPE_ICONS, UNIT_MARKER_SIZE } from "./unit-icon.js";
 
 /**
  * @typedef {{idx: number, sal_code: string, name: string, is_remainder: boolean}} MapSuburb
@@ -272,18 +273,44 @@ export function renderUnits(units, members) {
     const unitType = unitTypesByKey.get(unit.unitTypeKey);
     const visual = unitVisual(unit, unitType?.health ?? unit.health);
     const [x, y] = geo.label_point;
-    const marker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    marker.setAttribute("cx", String(x));
-    marker.setAttribute("cy", String(y));
-    marker.setAttribute("r", "160");
-    marker.setAttribute(
+    const size = UNIT_MARKER_SIZE;
+
+    // ANU-024: a colored-square backdrop (owner's color, same visual
+    // language as .factory-marker) with the archetype's icon layered on
+    // top — the icon itself is a fixed color (see unit-icon.js), so
+    // ownership is conveyed by the backdrop rather than an icon fill.
+    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    group.setAttribute(
       "class",
       `unit-marker unit-marker--${visual.icon} unit-marker--${visual.state}`,
     );
-    marker.setAttribute("style", `fill: ${colorByPlayerId.get(unit.ownerPlayerId) ?? "#888"};`);
-    marker.dataset.unitId = unit.id;
-    marker.dataset.salCode = unit.sal_code;
-    unitsLayer.appendChild(marker);
+
+    const backdrop = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    backdrop.setAttribute("x", String(x - size / 2));
+    backdrop.setAttribute("y", String(y - size / 2));
+    backdrop.setAttribute("width", String(size));
+    backdrop.setAttribute("height", String(size));
+    backdrop.setAttribute("class", "unit-marker__backdrop");
+    backdrop.setAttribute("style", `fill: ${colorByPlayerId.get(unit.ownerPlayerId) ?? "#888"};`);
+
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "image");
+    icon.setAttribute("href", UNIT_ARCHETYPE_ICONS[visual.icon]);
+    icon.setAttribute("x", String(x - size / 2));
+    icon.setAttribute("y", String(y - size / 2));
+    icon.setAttribute("width", String(size));
+    icon.setAttribute("height", String(size));
+    icon.setAttribute("image-rendering", "pixelated");
+    icon.setAttribute("class", "unit-marker__icon");
+
+    // Both children carry the same dataset — the click handler hit-tests via
+    // elementFromPoint, which resolves to whichever child is topmost at the
+    // clicked pixel (the icon image, painted last), not the group.
+    for (const el of [backdrop, icon]) {
+      el.dataset.unitId = unit.id;
+      el.dataset.salCode = unit.sal_code;
+      group.appendChild(el);
+    }
+    unitsLayer.appendChild(group);
   }
 }
 
