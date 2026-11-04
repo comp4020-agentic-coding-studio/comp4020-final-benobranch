@@ -303,6 +303,47 @@
   cursor: pointer;
 }
 
+/* ANU-017: diagonal-stripe contest overlays (map.js's renderCapture), drawn
+   into #map-ownership on top of ANU-020's plain ownership fill on the
+   .suburb paths below. pointer-events: none so taps still resolve to the
+   underlying suburb path, same reasoning as .dc-marker/.spawn-marker. */
+.capture-stripe {
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+/* "Pulse to show who is attacking who" (the user's own phrasing) — an
+   invading player's stripe specifically, never the resident's. */
+.capture-stripe--pulsing {
+  animation: capture-stripe-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes capture-stripe-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
+.capture-progress {
+  pointer-events: none;
+}
+
+.capture-progress__track {
+  fill: #05100e;
+  stroke: #0a4a42;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.85;
+}
+
+.capture-progress__fill {
+  fill: var(--accent);
+}
+
 @media (max-width: 480px) {
   .map-panel {
     height: min(60vh, 480px);

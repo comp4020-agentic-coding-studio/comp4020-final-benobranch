@@ -95,10 +95,13 @@
             role="application"
             aria-label="Canberra suburb map"
           >
+            <!-- ANU-017's renderCapture: one <pattern> per rendered diagonal-stripe layer, referenced
+                 by #map-ownership's overlay paths below. -->
+            <defs id="map-capture-defs"></defs>
             <g id="map-suburbs"></g>
-            <!-- ANU-017's renderOwnership/renderCapture layer (fill, diagonal-stripe contest visuals) —
-                 ANU-020's plain ownership fill colors the .suburb paths directly instead, leaving this
-                 layer untouched and still empty for ANU-017. -->
+            <!-- ANU-017's renderCapture layer (diagonal-stripe contest visuals + progress bar) —
+                 ANU-020's plain ownership fill colors the .suburb paths directly instead (renderOwnership),
+                 since a capture never changes who currently OWNS a suburb until it completes. -->
             <g id="map-ownership"></g>
             <g id="map-data-centers"></g>
             <g id="map-spawns"></g>

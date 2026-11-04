@@ -664,4 +664,29 @@ function migrate(db: DatabaseSync): void {
       throw err;
     }
   }
+
+  // v8 (ANU-017): drops suburb_ownership.contesting_player_id — reserved by
+  // ANU-013 for a single contester, but confirmed with the user that a
+  // suburb can be contested by more than one opposing player at once
+  // (lobbies go up to 12). server/territory.ts now derives every
+  // contesting player live from the `units` occupancy table instead of
+  // storing one in a fixed column, so the column is dead weight, never
+  // written to by any code that shipped before this version. Checked
+  // against issues/ANU-023.md's DROP COLUMN schema-corruption quirk: the
+  // v5 migration's `suburb_ownership` DDL has no inline comment immediately
+  // before `contesting_player_id` (unlike `factories`' columns that
+  // triggered it), so a plain DROP COLUMN is safe here — confirmed by
+  // reading the column's stored CREATE TABLE text back after migrating a
+  // real file-backed database, not just inferred from the DDL shape.
+  if (version < 8) {
+    db.exec("BEGIN");
+    try {
+      db.exec("ALTER TABLE suburb_ownership DROP COLUMN contesting_player_id");
+      db.exec("PRAGMA user_version = 8");
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+  }
 }

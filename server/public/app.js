@@ -17,7 +17,8 @@
 /** @typedef {import("../protocol.ts").OccupantUnit} OccupantUnit */
 /** @typedef {import("../protocol.ts").FactoryState} FactoryState */
 /** @typedef {import("../protocol.ts").UnitTypeCatalogEntry} UnitTypeCatalogEntry */
-import { mountMap, unmountMap, renderOwnership, renderBases, renderUnits, renderFactories, setUnitCatalog } from "./map.js";
+/** @typedef {import("../protocol.ts").SuburbCaptureState} SuburbCaptureState */
+import { mountMap, unmountMap, renderOwnership, renderBases, renderUnits, renderFactories, renderCapture, setUnitCatalog } from "./map.js";
 import { mountSidebar, unmountSidebar, updateSidebarState, selectFromMap } from "./sidebar.js";
 
 const TOKEN_KEY = "infrastructure-siege:token";
@@ -126,6 +127,9 @@ let factories = [];
 let unitCatalog = [];
 let economy = { scrap: 0, tflops: 0 };
 let sidebarMounted = false;
+// ANU-017: sparse — only suburbs currently mid-capture appear here.
+/** @type {SuburbCaptureState[]} */
+let captures = [];
 
 function setStatus(/** @type {"connecting" | "connected" | "disconnected"} */ state) {
   statusEl.dataset.state = state;
@@ -244,6 +248,7 @@ function renderLobbyScreen(/** @type {LobbyState} */ lobby) {
     renderBases(lobby.ownership, lobby.members);
     renderUnits(occupancy, lobby.members);
     renderFactories(factories, lobby.members);
+    renderCapture(captures, lobby.ownership, lobby.members);
     if (!sidebarMounted) {
       mountSidebar({ send });
       sidebarMounted = true;
@@ -362,6 +367,9 @@ function handleMessage(/** @type {ServerMessage} */ msg) {
     factories = msg.factories;
     if (currentLobby?.started) renderFactories(factories, currentLobby.members);
     updateSidebar();
+  } else if (msg.type === "captures") {
+    captures = msg.captures;
+    if (currentLobby?.started) renderCapture(captures, currentLobby.ownership, currentLobby.members);
   } else if (msg.type === "unitCatalog") {
     unitCatalog = msg.unitTypes;
     setUnitCatalog(unitCatalog);

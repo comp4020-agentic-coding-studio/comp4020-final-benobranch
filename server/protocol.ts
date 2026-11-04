@@ -259,6 +259,30 @@ export interface ServerEconomy {
   tflops: number;
 }
 
+/**
+ * One suburb's in-progress capture (ANU-017) — sparse, like `occupancy`:
+ * only suburbs currently being captured appear here at all (a settled,
+ * uncontested, not-being-captured suburb is simply absent). `ownership`
+ * (LobbyState) already carries who currently OWNS a suburb; this carries
+ * who's trying to take it away, from whom, and how far along that attempt
+ * is. `contestingPlayerIds` can hold more than one entry — confirmed with
+ * the user that a suburb can be contested by more than one opposing player
+ * at once (lobbies go up to 12), not just a single fixed contester.
+ */
+export interface SuburbCaptureState {
+  sal_code: string;
+  capturingPlayerId: string;
+  contestingPlayerIds: string[];
+  /** 0 (just started) to 1 (about to transfer) — frozen while contestingPlayerIds is non-empty. */
+  progressFraction: number;
+}
+
+export interface ServerCaptures {
+  type: "captures";
+  lobbyId: string;
+  captures: SuburbCaptureState[];
+}
+
 export interface ServerSkillTree {
   /**
    * The purchasing player's current unlocked-node set, resulting perk
@@ -336,7 +360,8 @@ export type ServerMessage =
   | ServerFactories
   | ServerUnitCatalog
   | ServerEconomy
-  | ServerSkillTree;
+  | ServerSkillTree
+  | ServerCaptures;
 
 const MAX_NAME_LENGTH = 40;
 const MAX_TOKEN_LENGTH = 100;

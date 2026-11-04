@@ -18,6 +18,7 @@ import {
   type LobbySummary,
   type LobbyState,
   type ServerMessage,
+  type SuburbCaptureState,
 } from "./protocol.ts";
 
 const PORT = Number(process.env.PORT ?? 8080);
@@ -138,6 +139,28 @@ function broadcastFactories(lobbyId: string): void {
   broadcastOccupancy(lobbyId);
 }
 
+/**
+ * Runs the capture state machine (ANU-017) against current occupancy, then
+ * broadcasts the result. A completed capture (ownership transfer) also
+ * transfers any factory standing in that suburb (issues/ANU-015.md's
+ * confirmed capture-transfer rule) and re-broadcasts lobby state, since
+ * LobbyState.ownership just changed. Called after every occupancy-driven
+ * action (placeUnit/moveUnit/attackSuburb) and from captureTicker below —
+ * never from an armed per-suburb timer (ADR 0001).
+ */
+function broadcastCaptures(lobbyId: string): void {
+  const { captures, transfers } = territory.settleCaptures(lobbyId);
+  const message: ServerMessage = { type: "captures", lobbyId, captures };
+  for (const socket of socketsInLobby(lobbyId)) send(socket, message);
+  if (transfers.length > 0) {
+    for (const transfer of transfers) {
+      factories.transferFactoryOwnership(lobbyId, transfer.salCode, transfer.newOwnerPlayerId);
+    }
+    broadcastLobbyState(lobbyId); // ownership changed
+    broadcastFactories(lobbyId); // a transferred factory's owner changed too
+  }
+}
+
 // A scrap/TFLOPS balance is private to the player it belongs to — unlike
 // LobbyState (identical for every socket in a lobby), this is never
 // broadcast, only sent to the owning player's own socket(s) (ANU-020).
@@ -235,6 +258,17 @@ const factoryTicker = setInterval(() => {
 }, 1000);
 factoryTicker.unref();
 
+// Same reasoning as factoryTicker above, for ANU-017's capture progress —
+// matching the brief's ~1s real-time bar even when nobody's sent a message
+// recently (e.g. two units are just sitting in a contested suburb).
+const captureTicker = setInterval(() => {
+  const liveLobbyIds = new Set([...sockets.values()].map((m) => m.lobbyId).filter((id): id is string => id !== null));
+  for (const lobbyId of liveLobbyIds) {
+    if (store.getLobby(lobbyId)?.started) broadcastCaptures(lobbyId);
+  }
+}, 1000);
+captureTicker.unref();
+
 wss.on("connection", (socket) => {
   alive.add(socket);
   socket.on("pong", () => alive.add(socket));
@@ -251,6 +285,19 @@ wss.on("connection", (socket) => {
     if (message.type === "hello") {
       const { playerId, token } = store.resolvePlayer(message.token);
       const lobbyId = store.getCurrentLobbyId(playerId); // null if they've never joined one
+      // settleCaptures runs BEFORE buildLobbyState below so a transfer that
+      // should have completed while nobody was connected to trigger one
+      // (stored-timestamp rule — no armed timer kept it running) is already
+      // reflected in `welcome`'s own LobbyState.ownership, not just in the
+      // separate `captures` message sent after it.
+      let pendingCaptures: SuburbCaptureState[] = [];
+      if (lobbyId) {
+        const { captures, transfers } = territory.settleCaptures(lobbyId);
+        pendingCaptures = captures;
+        for (const transfer of transfers) {
+          factories.transferFactoryOwnership(lobbyId, transfer.salCode, transfer.newOwnerPlayerId);
+        }
+      }
       const lobby = lobbyId ? store.getLobby(lobbyId) : null;
 
       sockets.set(socket, { playerId, lobbyId, registered: true, watchingLobbies: false });
@@ -266,6 +313,7 @@ wss.on("connection", (socket) => {
       // was connected (the stored-timestamp rule means that's fine).
       if (lobbyId) send(socket, { type: "occupancy", lobbyId, units: units.getOccupancy(lobbyId) });
       if (lobbyId) send(socket, { type: "factories", lobbyId, factories: factories.getFactories(lobbyId) });
+      if (lobbyId) send(socket, { type: "captures", lobbyId, captures: pendingCaptures });
       if (lobbyId) sendEconomyToPlayer(lobbyId, playerId);
       if (lobbyId) {
         send(socket, {
@@ -337,6 +385,7 @@ wss.on("connection", (socket) => {
         return;
       }
       broadcastOccupancy(meta.lobbyId);
+      broadcastCaptures(meta.lobbyId); // a newly placed unit can start, pause, resume or reset a capture
       return;
     }
 
@@ -348,6 +397,7 @@ wss.on("connection", (socket) => {
         return;
       }
       broadcastOccupancy(meta.lobbyId);
+      broadcastCaptures(meta.lobbyId); // the unit arriving/leaving can start, pause, resume or reset a capture
       return;
     }
 
@@ -362,6 +412,9 @@ wss.on("connection", (socket) => {
       // A kill credits scrap (server/units.ts) — update the attacker's own
       // sidebar economy readout (ANU-020); move/hit outcomes don't change it.
       if (result.outcome === "kill") sendEconomyToPlayer(meta.lobbyId, meta.playerId);
+      // A kill/advance can clear a defended suburb down to a single occupant
+      // (or an empty one), which can start, pause, resume or reset a capture.
+      broadcastCaptures(meta.lobbyId);
       return;
     }
 
