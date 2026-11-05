@@ -29,6 +29,7 @@
 // zoneVisual's pure output) and a progress bar under the suburb's icon, both per
 // suburb currently mid-capture — sparse, same full-redraw precedent.
 import { unitVisual } from "./unit-visual.js";
+import { layoutUnitMarkers } from "./unit-marker-layout.js";
 import { factoryVisual } from "./factory-visual.js";
 import { DATA_CENTER_TIER_ICONS, DATA_CENTER_TIER_MARKER_SIZE } from "./data-center-visual.js";
 import { UNIT_ARCHETYPE_ICONS, UNIT_MARKER_SIZE } from "./unit-icon.js";
@@ -125,6 +126,14 @@ let onSelect = () => {};
 
 /** Keyed by unit_types.key — needed for unitVisual's maxHealth param. Set once via setUnitCatalog. */
 let unitTypesByKey = /** @type {Map<string, UnitTypeCatalogEntry>} */ (new Map());
+
+// ANU-034: layoutUnitMarkers' loss-flash detection needs the PREVIOUS call's
+// per-(suburb, owner, archetype) counts — module state here, parallel to
+// mountedLobbyId's precedent, rather than threaded through app.js, since
+// renderUnits is the only caller and every caller already redraws the whole
+// layer from a full occupancy snapshot.
+/** @type {Map<string, number>} */
+let unitGroupCounts = new Map();
 
 /**
  * app.js calls this once a `unitCatalog` message arrives — independent of
@@ -291,6 +300,10 @@ export async function mountMap(lobbyId, capacity, selectCallback) {
 /** Clears mount state so a later mountMap() for a different lobby redraws the spawn ring. */
 export function unmountMap() {
   mountedLobbyId = null;
+  // ANU-034: otherwise a fresh lobby's first renderUnits call would diff
+  // against the previous lobby's leftover counts and could misfire a loss
+  // flash on units that were never actually lost.
+  unitGroupCounts = new Map();
 }
 
 /**
@@ -457,23 +470,57 @@ export function renderCapture(captures, ownership, members) {
   }
 }
 
+// ANU-034: horizontal gap between two archetype groups fanned out at the
+// same suburb — visibly separate, same spirit as BAR_GAP below, but applied
+// between icons instead of between an icon and its progress bar.
+const UNIT_GROUP_GAP = 80;
+// Vertical gap between an icon's bottom edge and its count label.
+const UNIT_COUNT_GAP = 40;
+
 /**
- * Populates #map-units with one icon per occupant (ANU-020), via the
- * already-tested unitVisual(). Full redraw on every `occupancy` broadcast —
- * same replaceChildren-then-rebuild precedent as renderSpawns.
+ * Populates #map-units with one marker per (suburb, owner, archetype) group
+ * (ANU-034 — previously one marker per individual occupant, ANU-020/024),
+ * via the already-tested unitVisual()/layoutUnitMarkers(). Groups sharing a
+ * suburb are fanned out left-to-right around label_point instead of all
+ * drawn at the same point, so a drone and a robot (or two owners' units) at
+ * one tile no longer fully occlude each other. Each group shows its count
+ * as white text beneath the icon, which flashes/jitters (`.unit-marker--lost`,
+ * map.css) when layoutUnitMarkers reports the group's count just dropped.
+ * Full redraw on every `occupancy` broadcast — same replaceChildren-then-
+ * rebuild precedent as renderSpawns.
  * @param {OccupantUnit[]} units
  * @param {PlayerPresence[]} members
  */
 export function renderUnits(units, members) {
   unitsLayer.replaceChildren();
   const colorByPlayerId = new Map(members.map((m) => [m.playerId, m.color]));
-  for (const unit of units) {
-    const geo = sal_codeToGeo.get(unit.sal_code);
-    if (!geo) continue;
+
+  const resolved = units.map((unit) => {
     const unitType = unitTypesByKey.get(unit.unitTypeKey);
     const visual = unitVisual(unit, unitType?.health ?? unit.health);
-    const [x, y] = geo.label_point;
+    return {
+      id: unit.id,
+      sal_code: unit.sal_code,
+      ownerPlayerId: unit.ownerPlayerId,
+      archetype: visual.icon,
+      inTransit: visual.state === "in-transit",
+    };
+  });
+  const { groups, nextCountByGroupKey } = layoutUnitMarkers(resolved, unitGroupCounts);
+  unitGroupCounts = nextCountByGroupKey;
+
+  for (const unitGroup of groups) {
+    const geo = sal_codeToGeo.get(unitGroup.sal_code);
+    if (!geo) continue;
+    const [cx, cy] = geo.label_point;
     const size = UNIT_MARKER_SIZE;
+
+    // Center the whole row of this suburb's groups on label_point, rather
+    // than left-aligning from it, so a single group still sits exactly
+    // where the old one-marker-per-tile code drew it.
+    const rowWidth = unitGroup.groupCountAtSalCode * size + (unitGroup.groupCountAtSalCode - 1) * UNIT_GROUP_GAP;
+    const x = cx - rowWidth / 2 + unitGroup.offsetIndex * (size + UNIT_GROUP_GAP) + size / 2;
+    const y = cy;
 
     // ANU-024: a colored-square backdrop (owner's color, same visual
     // language as .factory-marker) with the archetype's icon layered on
@@ -482,7 +529,7 @@ export function renderUnits(units, members) {
     const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
     group.setAttribute(
       "class",
-      `unit-marker unit-marker--${visual.icon} unit-marker--${visual.state}`,
+      `unit-marker unit-marker--${unitGroup.archetype} unit-marker--${unitGroup.inTransit ? "in-transit" : "grounded"}`,
     );
 
     const backdrop = document.createElementNS("http://www.w3.org/2000/svg", "rect");
@@ -491,10 +538,10 @@ export function renderUnits(units, members) {
     backdrop.setAttribute("width", String(size));
     backdrop.setAttribute("height", String(size));
     backdrop.setAttribute("class", "unit-marker__backdrop");
-    backdrop.setAttribute("style", `fill: ${colorByPlayerId.get(unit.ownerPlayerId) ?? "#888"};`);
+    backdrop.setAttribute("style", `fill: ${colorByPlayerId.get(unitGroup.ownerPlayerId) ?? "#888"};`);
 
     const icon = document.createElementNS("http://www.w3.org/2000/svg", "image");
-    icon.setAttribute("href", UNIT_ARCHETYPE_ICONS[visual.icon]);
+    icon.setAttribute("href", UNIT_ARCHETYPE_ICONS[unitGroup.archetype]);
     icon.setAttribute("x", String(x - size / 2));
     icon.setAttribute("y", String(y - size / 2));
     icon.setAttribute("width", String(size));
@@ -502,12 +549,30 @@ export function renderUnits(units, members) {
     icon.setAttribute("image-rendering", "pixelated");
     icon.setAttribute("class", "unit-marker__icon");
 
-    // Both children carry the same dataset — the click handler hit-tests via
-    // elementFromPoint, which resolves to whichever child is topmost at the
-    // clicked pixel (the icon image, painted last), not the group.
-    for (const el of [backdrop, icon]) {
-      el.dataset.unitId = unit.id;
-      el.dataset.salCode = unit.sal_code;
+    // ANU-034: "xN" count readout beneath the icon — white by default,
+    // toggled to the flash/jitter animation (map.css) via the modifier
+    // class below when layoutUnitMarkers reports a drop since last render.
+    const count = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    count.setAttribute("x", String(x));
+    count.setAttribute("y", String(y + size / 2 + UNIT_COUNT_GAP));
+    count.setAttribute("text-anchor", "middle");
+    count.setAttribute("dominant-baseline", "hanging");
+    count.setAttribute(
+      "class",
+      unitGroup.lostAUnit ? "unit-marker__count unit-marker__count--lost" : "unit-marker__count",
+    );
+    count.textContent = `x${unitGroup.count}`;
+
+    // All three children carry the same dataset — the click handler
+    // hit-tests via elementFromPoint, which resolves to whichever element
+    // is topmost at the clicked pixel (the icon image, painted last over
+    // the backdrop; the count label sits below the icon's footprint so it
+    // never overlaps either). sampleUnitId picks one representative unit
+    // from the group for selection, since a group no longer maps 1:1 to a
+    // single OccupantUnit the way a pre-ANU-034 marker did.
+    for (const el of [backdrop, icon, count]) {
+      el.dataset.unitId = unitGroup.sampleUnitId;
+      el.dataset.salCode = unitGroup.sal_code;
       group.appendChild(el);
     }
     unitsLayer.appendChild(group);
