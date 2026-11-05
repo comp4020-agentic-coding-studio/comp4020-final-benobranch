@@ -42,6 +42,18 @@
  */
 
 /**
+ * One (suburb, unit type) cluster among the viewing player's own units
+ * across the whole map, for the Units tab (ANU-037) — grouped per suburb
+ * (rendered as a subheading) then by type with a count, replacing one row
+ * per individual unit. No owner field: the Units tab only ever shows the
+ * viewing player's own units, so it would be redundant on every row.
+ * @typedef {object} UnitsByZoneGroup
+ * @property {string} sal_code
+ * @property {string} unitTypeKey
+ * @property {number} count
+ */
+
+/**
  * @param {{
  *   sal_code: string,
  *   ownership: Record<string, string>,
@@ -88,4 +100,26 @@ export function suburbDetailViewModel({ sal_code, ownership, occupancy, factorie
     // here and lets the server accept/reject the actual order.
     movableUnitGroups: [...countByType.entries()].map(([unitTypeKey, count]) => ({ unitTypeKey, count })),
   };
+}
+
+/**
+ * Groups the viewing player's own units (from every suburb, not just one)
+ * by `(sal_code, unitTypeKey)` with a count — the Units tab's data (ANU-037),
+ * replacing one row per individual unit. Order is insertion order of first
+ * sighting, same as `occupantGroups`/`movableUnitGroups` above; `sidebar.js`
+ * sorts suburbs for display.
+ * @param {{ occupancy: OccupantUnit[], myPlayerId: string }} input
+ * @returns {UnitsByZoneGroup[]}
+ */
+export function unitsByZone({ occupancy, myPlayerId }) {
+  /** @type {Map<string, UnitsByZoneGroup>} */
+  const groupByKey = new Map();
+  for (const unit of occupancy) {
+    if (unit.ownerPlayerId !== myPlayerId) continue;
+    const key = `${unit.sal_code}|${unit.unitTypeKey}`;
+    const existing = groupByKey.get(key);
+    if (existing) existing.count += 1;
+    else groupByKey.set(key, { sal_code: unit.sal_code, unitTypeKey: unit.unitTypeKey, count: 1 });
+  }
+  return [...groupByKey.values()];
 }

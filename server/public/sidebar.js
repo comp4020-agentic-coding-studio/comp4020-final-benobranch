@@ -30,7 +30,7 @@
 /** @typedef {import("../protocol.ts").FactoryState} FactoryState */
 /** @typedef {import("../protocol.ts").UnitTypeCatalogEntry} UnitTypeCatalogEntry */
 /** @typedef {import("./map.js").MapSelection} MapSelection */
-import { suburbDetailViewModel } from "./suburb-detail-view.js";
+import { suburbDetailViewModel, unitsByZone } from "./suburb-detail-view.js";
 import { skillTreeVisual } from "./skill-tree-visual.js";
 import { SKILL_NODES } from "./skill-tree-nodes.js";
 import { groundCanReachSuburb } from "./map.js";
@@ -313,13 +313,14 @@ function renderSuburbDetail() {
     // ANU-035: one row per (owner, unit type) with a count, not one row per
     // individual unit — a suburb with dozens of units used to render dozens
     // of identical "Drone — Beno (3 hp)" rows, the same overlap problem
-    // ANU-034 already fixed for the map's unit markers.
+    // ANU-034 already fixed for the map's unit markers. ANU-037: owner name
+    // leads each row ("Beno — Drone ×32"), not the unit type.
     const occupantsList = document.createElement("ul");
     occupantsList.className = "roster-list";
     for (const group of detail.occupantGroups) {
       const li = document.createElement("li");
       const ownerMember = lobby.members.find((m) => m.playerId === group.ownerPlayerId);
-      li.textContent = `${unitTypeLabel(group.unitTypeKey)} — ${ownerMember?.name ?? "unknown"} ×${group.count}`;
+      li.textContent = `${ownerMember?.name ?? "unknown"} — ${unitTypeLabel(group.unitTypeKey)} ×${group.count}`;
       occupantsList.appendChild(li);
     }
     suburbDetailEl.appendChild(occupantsList);
@@ -366,25 +367,55 @@ function renderSuburbDetail() {
   suburbDetailEl.appendChild(actions);
 }
 
+/**
+ * ANU-037: one subheading per suburb the player has units in, then one row
+ * per unit type at that suburb with a count — replacing the old one-row-
+ * per-individual-unit list (the same overlap problem ANU-035 already fixed
+ * for the Territory tab's occupant list). No owner name on these rows: this
+ * tab only ever shows the viewing player's own units.
+ */
 function renderUnitList() {
   if (!currentState) return;
   const { occupancy, myPlayerId } = currentState;
-  const mine = occupancy.filter((u) => u.ownerPlayerId === myPlayerId);
-  if (mine.length === 0) {
+  const groups = unitsByZone({ occupancy, myPlayerId });
+  if (groups.length === 0) {
     const empty = document.createElement("li");
     empty.className = "empty";
     empty.textContent = "No units yet.";
     unitListEl.replaceChildren(empty);
     return;
   }
-  unitListEl.replaceChildren(
-    ...mine.map((unit) => {
+
+  /** @type {Map<string, import("./suburb-detail-view.js").UnitsByZoneGroup[]>} */
+  const groupsBySalCode = new Map();
+  for (const group of groups) {
+    const bucket = groupsBySalCode.get(group.sal_code);
+    if (bucket) bucket.push(group);
+    else groupsBySalCode.set(group.sal_code, [group]);
+  }
+
+  const selection = currentSelection;
+  const selectedUnit =
+    selection && selection.type === "unit" ? (occupancy.find((u) => u.id === selection.unitId) ?? null) : null;
+
+  const rows = [];
+  for (const sal_code of [...groupsBySalCode.keys()].sort()) {
+    const heading = document.createElement("li");
+    heading.className = "roster-list__zone-heading";
+    heading.textContent = sal_code;
+    rows.push(heading);
+
+    const zoneGroups = /** @type {import("./suburb-detail-view.js").UnitsByZoneGroup[]} */ (groupsBySalCode.get(sal_code));
+    for (const group of zoneGroups.sort((a, b) => a.unitTypeKey.localeCompare(b.unitTypeKey))) {
       const li = document.createElement("li");
-      if (currentSelection?.type === "unit" && currentSelection.unitId === unit.id) li.classList.add("highlighted");
-      li.textContent = `${unitTypeLabel(unit.unitTypeKey)} @ ${unit.sal_code} (${unit.health} hp)`;
-      return li;
-    }),
-  );
+      if (selectedUnit && selectedUnit.sal_code === group.sal_code && selectedUnit.unitTypeKey === group.unitTypeKey) {
+        li.classList.add("highlighted");
+      }
+      li.textContent = `${unitTypeLabel(group.unitTypeKey)} x${group.count}`;
+      rows.push(li);
+    }
+  }
+  unitListEl.replaceChildren(...rows);
 }
 
 function renderFactoryList() {

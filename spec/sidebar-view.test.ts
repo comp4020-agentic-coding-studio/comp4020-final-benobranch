@@ -15,7 +15,7 @@
 // SELECTED SUBURB ONLY, grouped by type with a count) — the Risk-style
 // "Move units" quantity panel's per-row data.
 import { expect, it } from "vitest";
-import { suburbDetailViewModel } from "../server/public/suburb-detail-view.js";
+import { suburbDetailViewModel, unitsByZone } from "../server/public/suburb-detail-view.js";
 
 const ME = "p1";
 const THEM = "p2";
@@ -170,4 +170,32 @@ it("occupantGroups is empty when the selected suburb has no occupants", () => {
     myPlayerId: ME,
   });
   expect(detail.occupantGroups).toEqual([]);
+});
+
+// ANU-037: unitsByZone is the Units tab's data — the viewing player's own
+// units across every suburb, grouped by (sal_code, unitTypeKey) with a
+// count, replacing one row per individual unit.
+it("unitsByZone groups the viewing player's own units across every suburb by (sal_code, unit type)", () => {
+  const myDrone1 = { id: "u1", ownerPlayerId: ME, sal_code: "80001-0", unitTypeKey: "drone", health: 3 };
+  const myDrone2 = { id: "u2", ownerPlayerId: ME, sal_code: "80001-0", unitTypeKey: "drone", health: 1 };
+  const myRobot = { id: "u3", ownerPlayerId: ME, sal_code: "80001-0", unitTypeKey: "robot", health: 10 };
+  const myDroneElsewhere = { id: "u4", ownerPlayerId: ME, sal_code: "80002-0", unitTypeKey: "drone", health: 3 };
+  const theirUnit = { id: "u5", ownerPlayerId: THEM, sal_code: "80001-0", unitTypeKey: "robot", health: 6 };
+  const groups = unitsByZone({
+    occupancy: [myDrone1, myDrone2, myRobot, myDroneElsewhere, theirUnit],
+    myPlayerId: ME,
+  });
+  expect(groups).toEqual(
+    expect.arrayContaining([
+      { sal_code: "80001-0", unitTypeKey: "drone", count: 2 },
+      { sal_code: "80001-0", unitTypeKey: "robot", count: 1 },
+      { sal_code: "80002-0", unitTypeKey: "drone", count: 1 },
+    ]),
+  );
+  expect(groups).toHaveLength(3);
+});
+
+it("unitsByZone is empty when the player has no units anywhere", () => {
+  const theirUnit = { id: "u1", ownerPlayerId: THEM, sal_code: "80001-0", unitTypeKey: "robot", health: 6 };
+  expect(unitsByZone({ occupancy: [theirUnit], myPlayerId: ME })).toEqual([]);
 });
