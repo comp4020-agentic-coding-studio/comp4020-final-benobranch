@@ -60,3 +60,13 @@ Two things that quietly eat agent budget without being required by
   anything it directly links to via `[[ANU-NNN]]`). Don't survey the whole
   backlog to "get oriented" — `ls issues/` plus the one issue's frontmatter
   (`status`, `title`) is enough to confirm it's the right one to pick up.
+
+## Before opening a new issue for a `pnpm check` failure
+
+[[ANU-032]] opened a new issue investigating two test failures from scratch,
+duplicating [[ANU-012]] and [[ANU-026]], which had already diagnosed the
+same two root causes days earlier in sibling worktrees. Before filing a new
+issue for a failing test, `grep -l <test file or test name> issues/*.md` —
+if it's already tracked, add a Resolution/update there instead of opening a
+duplicate. This is cheaper than the full-backlog read the rule above warns
+against, and `ls issues/` alone doesn't surface it.
