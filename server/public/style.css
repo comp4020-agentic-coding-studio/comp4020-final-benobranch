@@ -374,7 +374,8 @@ button:not(:disabled):hover {
 }
 
 .sidebar-tabs {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
   gap: 0.4rem;
 }
 
@@ -387,7 +388,6 @@ button:not(:disabled):hover {
 }
 
 .sidebar-tab {
-  flex: 1;
   padding: 0.5rem 0.4rem;
   font-size: 0.8rem;
   background: var(--bg);
@@ -574,11 +574,12 @@ button:not(:disabled):hover {
 
 /* ANU-029: Research tab (skill tree). Cards reuse .roster-list li; a node
    with a prerequisite sits indented under its parent with a connector. */
-/* Four tabs now share the 320px sidebar — trim side padding so "Territory"
-   and "Factories" still fit on one line. */
+/* Four tabs no longer fit on one line in the 320px sidebar without the text
+   overlapping, so .sidebar-tabs above lays them out as a 2x2 grid instead;
+   min-width: 0 keeps a long label from forcing its grid cell wider than the
+   others. */
 .sidebar-tab {
   min-width: 0;
-  padding-inline: 0.2rem;
 }
 
 .sidebar-error {
