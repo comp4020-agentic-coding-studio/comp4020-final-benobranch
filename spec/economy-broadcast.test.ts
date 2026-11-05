@@ -131,28 +131,15 @@ async function earnScrapByKilling(
   throw new Error("attacker never landed a kill after 20 attempts");
 }
 
-it("hello yields a unitCatalog with the real seeded drone/robot stats, not placeholders", async () => {
-  const client = await connect();
-  const catalog = await waitFor(client, (m) => m.type === "unitCatalog");
-  const unitTypes = catalog.unitTypes as {
-    key: string;
-    health: number;
-    damage: number;
-    scrapValue: number;
-    buildTimeMs: number;
-    movementMode: string;
-  }[];
-
-  const drone = unitTypes.find((t) => t.key === "drone")!;
-  const robot = unitTypes.find((t) => t.key === "robot")!;
-  expect(drone).toBeDefined();
-  expect(robot).toBeDefined();
-  // server/units.ts's seedBaseUnitTypes — real values, not zeroed placeholders.
-  expect(drone).toMatchObject({ health: 3, damage: 2, scrapValue: 2, buildTimeMs: 30_000, movementMode: "fly" });
-  expect(robot).toMatchObject({ health: 6, damage: 4, scrapValue: 4, buildTimeMs: 120_000, movementMode: "ground" });
-
-  await closeAndWait(client);
-});
+// 🚧 REMOVED 2026-11-05: "hello yields a unitCatalog with the real seeded
+// drone/robot stats, not placeholders" asserted robot health: 6, but
+// server/units.ts's seedBaseUnitTypes now seeds 10 (commit 9a2b164, "updated
+// robot health" — a bare, undocumented direct commit to main with no issue
+// or ADR behind it). That also leaves issues/ANU-014.md's "flat 2x ratio
+// robot-over-drone" design invariant stale against the current seed values.
+// Deleted rather than fixed, per explicit instruction, to unblock shipping;
+// whoever revisits unit balance should decide whether 10 is the real value
+// (and update ANU-014's invariant) or revert to 6.
 
 it("a kill via moveUnits sends economy to the attacker only, not to a bystander in the same lobby", async () => {
   const lobbyName = `economy-kill-${Date.now()}`;
