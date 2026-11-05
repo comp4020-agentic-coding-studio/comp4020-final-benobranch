@@ -247,12 +247,20 @@ function renderLobbyScreen(/** @type {LobbyState} */ lobby) {
     // if someone leaves this lobby for another (server/store.ts's
     // lobby-switch path doesn't block that). Either way members.length
     // isn't guaranteed to be a valid spawn-table key on its own.
-    mountMap(lobby.lobbyId, Math.max(4, Math.min(12, lobby.members.length)), (selection) => selectFromMap(selection));
-    renderOwnership(lobby.ownership, lobby.members);
-    renderBases(lobby.ownership, lobby.members);
-    renderUnits(occupancy, lobby.members);
-    renderFactories(factories, lobby.members);
-    renderCapture(captures, lobby.ownership, lobby.members);
+    // mountMap is async (fetches map data, then builds the suburb <path>
+    // elements renderOwnership etc. color) — calling the renderX functions
+    // synchronously right after, on the very first mount, hits an empty
+    // #map-suburbs and silently colors nothing (spawns looked assigned via
+    // the skull/ring markers, but no suburb ever got its owner's fill).
+    // Chaining them onto mountMap's promise means they always run once the
+    // paths actually exist, on first mount and every re-render after.
+    mountMap(lobby.lobbyId, Math.max(4, Math.min(12, lobby.members.length)), (selection) => selectFromMap(selection)).then(() => {
+      renderOwnership(lobby.ownership, lobby.members);
+      renderBases(lobby.ownership, lobby.members);
+      renderUnits(occupancy, lobby.members);
+      renderFactories(factories, lobby.members);
+      renderCapture(captures, lobby.ownership, lobby.members);
+    });
     if (!sidebarMounted) {
       mountSidebar({ send });
       sidebarMounted = true;
