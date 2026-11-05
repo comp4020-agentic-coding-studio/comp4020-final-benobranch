@@ -195,6 +195,20 @@ function cleanLabel(/** @type {string} */ name) {
 }
 
 /**
+ * Resolves a `sal_code` to its display name (ANU-038), same lookup/cleanup
+ * `showTooltip`'s own `describe()` uses for the map's tooltip — sidebar.js
+ * otherwise has no access to `sal_codeToName`, which is only populated once
+ * `mountMap`'s `initOnce()` has fetched map.json. Falls back to the raw
+ * `sal_code` before that data has loaded, or for a code map.json doesn't
+ * recognise, rather than showing nothing.
+ * @param {string} sal_code
+ */
+export function suburbName(sal_code) {
+  const info = sal_codeToName.get(sal_code);
+  return info ? cleanLabel(info.name) : sal_code;
+}
+
+/**
  * Builds the static suburb/data-center layers and wires up pan/zoom/tap —
  * all independent of any particular lobby, so this only ever runs once per
  * page load, on the first lobby that mounts the map.

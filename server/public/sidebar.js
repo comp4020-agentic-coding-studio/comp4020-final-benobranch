@@ -33,7 +33,7 @@
 import { suburbDetailViewModel, unitsByZone } from "./suburb-detail-view.js";
 import { skillTreeVisual } from "./skill-tree-visual.js";
 import { SKILL_NODES } from "./skill-tree-nodes.js";
-import { groundCanReachSuburb } from "./map.js";
+import { groundCanReachSuburb, suburbName } from "./map.js";
 export { suburbDetailViewModel };
 
 /**
@@ -220,7 +220,7 @@ function buildMovePanel(movableUnitGroups) {
     const toSalCode = pendingMove.toSalCode;
     const send_ = document.createElement("button");
     send_.type = "button";
-    send_.textContent = `Send to ${toSalCode}`;
+    send_.textContent = `Send to ${suburbName(toSalCode)}`;
     send_.addEventListener("click", () => confirmAndSendPendingMove(toSalCode));
     wrap.appendChild(send_);
   } else {
@@ -254,7 +254,7 @@ function confirmAndSendPendingMove(toSalCode) {
   if (Object.keys(counts).length === 0) return; // nothing selected — stay open rather than send an empty order
 
   const isOwnedByMe = lobby.ownership[toSalCode] === myPlayerId;
-  if (!isOwnedByMe && !window.confirm(`Confirm attack on ${toSalCode}?`)) return;
+  if (!isOwnedByMe && !window.confirm(`Confirm attack on ${suburbName(toSalCode)}?`)) return;
 
   send({ type: "moveUnits", fromSalCode: pendingMove.fromSalCode, toSalCode, counts });
   pendingMove = null;
@@ -297,7 +297,7 @@ function renderSuburbDetail() {
 
   const name = document.createElement("p");
   name.className = "suburb-detail__name";
-  name.textContent = sal_code;
+  name.textContent = suburbName(sal_code);
   suburbDetailEl.appendChild(name);
 
   const owner = document.createElement("p");
@@ -402,7 +402,7 @@ function renderUnitList() {
   for (const sal_code of [...groupsBySalCode.keys()].sort()) {
     const heading = document.createElement("li");
     heading.className = "roster-list__zone-heading";
-    heading.textContent = sal_code;
+    heading.textContent = suburbName(sal_code);
     rows.push(heading);
 
     const zoneGroups = /** @type {import("./suburb-detail-view.js").UnitsByZoneGroup[]} */ (groupsBySalCode.get(sal_code));
@@ -436,7 +436,7 @@ function renderFactoryList() {
         li.classList.add("highlighted");
       }
       const location = document.createElement("span");
-      location.textContent = `Factory @ ${factory.sal_code}`;
+      location.textContent = `Factory @ ${suburbName(factory.sal_code)}`;
       li.appendChild(location);
       li.appendChild(buildProductionDisplay(factory.production));
       return li;
