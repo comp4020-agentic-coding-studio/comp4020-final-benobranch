@@ -298,6 +298,63 @@
   opacity: 0.6;
 }
 
+/* ANU-034: "xN" readout under each archetype group's icon — plain white so
+   it reads against any owner-color backdrop, same reasoning unit-icon.js
+   gives for the icon glyph's own fixed "glitch" white. */
+.unit-marker__count {
+  fill: #ffffff;
+  /* SVG user units, not CSS px — the map viewBox is in the same arbitrary
+     units as UNIT_MARKER_SIZE (320), so this is sized relative to the icon
+     above it, not to the viewer's actual screen pixels. */
+  font-size: 160px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+/* Transient "a unit of this group was just lost" feedback (ANU-034's user
+   request: "flash red and jitter... so the battle can be tracked a bit
+   easier") — a modifier class toggled from JS whenever map.js's
+   layoutUnitMarkers reports this render's count is lower than last
+   render's, same JS-toggles-class/animation-lives-in-CSS split as
+   .capture-stripe--pulsing below. One-shot rather than looping (`forwards`
+   holds the end state) since the next occupancy broadcast either redraws
+   the label plain again or, if another unit is lost before this finishes,
+   re-triggers the same animation from a fresh element (renderUnits does a
+   full replaceChildren rebuild every call, so a re-added class always
+   restarts the animation rather than needing a reflow hack). */
+.unit-marker__count--lost {
+  animation: unit-count-lost 0.5s ease-in-out;
+}
+
+/* Translate amounts are in map/SVG user units (same space as
+   UNIT_MARKER_SIZE's 320), not CSS px — sized as a fraction of the marker
+   so the jitter reads as a shake relative to the icon above it at any
+   zoom level, same reasoning unit-marker__count's font-size comments give. */
+@keyframes unit-count-lost {
+  0% {
+    fill: #ffffff;
+    transform: translate(0, 0);
+  }
+  20% {
+    fill: #ff4d4d;
+    transform: translate(-40px, 0);
+  }
+  40% {
+    transform: translate(36px, 0);
+  }
+  60% {
+    fill: #ff4d4d;
+    transform: translate(-28px, 0);
+  }
+  80% {
+    transform: translate(18px, 0);
+  }
+  100% {
+    fill: #ffffff;
+    transform: translate(0, 0);
+  }
+}
+
 .factory-marker {
   stroke: #05201c;
   stroke-width: 1.5;
