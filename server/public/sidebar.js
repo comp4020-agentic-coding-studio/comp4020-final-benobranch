@@ -309,13 +309,17 @@ function renderSuburbDetail() {
   owner.appendChild(document.createTextNode(detail.ownerName ? `Owned by ${detail.ownerName}` : "Unclaimed"));
   suburbDetailEl.appendChild(owner);
 
-  if (detail.occupants.length > 0) {
+  if (detail.occupantGroups.length > 0) {
+    // ANU-035: one row per (owner, unit type) with a count, not one row per
+    // individual unit — a suburb with dozens of units used to render dozens
+    // of identical "Drone — Beno (3 hp)" rows, the same overlap problem
+    // ANU-034 already fixed for the map's unit markers.
     const occupantsList = document.createElement("ul");
     occupantsList.className = "roster-list";
-    for (const unit of detail.occupants) {
+    for (const group of detail.occupantGroups) {
       const li = document.createElement("li");
-      const ownerMember = lobby.members.find((m) => m.playerId === unit.ownerPlayerId);
-      li.textContent = `${unitTypeLabel(unit.unitTypeKey)} — ${ownerMember?.name ?? "unknown"} (${unit.health} hp)`;
+      const ownerMember = lobby.members.find((m) => m.playerId === group.ownerPlayerId);
+      li.textContent = `${unitTypeLabel(group.unitTypeKey)} — ${ownerMember?.name ?? "unknown"} ×${group.count}`;
       occupantsList.appendChild(li);
     }
     suburbDetailEl.appendChild(occupantsList);

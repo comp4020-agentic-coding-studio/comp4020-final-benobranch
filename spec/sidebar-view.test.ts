@@ -132,3 +132,42 @@ it("occupants lists every unit standing in the selected suburb specifically, reg
   });
   expect(detail.occupants).toEqual([here1, here2]);
 });
+
+// ANU-035: occupantGroups replaces one-row-per-unit rendering in sidebar.js
+// with one row per (owner, unit type) plus a count — a suburb holding many
+// units used to render a wall of identical "Drone — Beno (3 hp)" rows.
+it("occupantGroups groups the selected suburb's occupants by owner and unit type, regardless of individual health", () => {
+  const myDrone1 = { id: "u1", ownerPlayerId: ME, sal_code: "80001-0", unitTypeKey: "drone", health: 3 };
+  const myDrone2 = { id: "u2", ownerPlayerId: ME, sal_code: "80001-0", unitTypeKey: "drone", health: 1 };
+  const myRobot = { id: "u3", ownerPlayerId: ME, sal_code: "80001-0", unitTypeKey: "robot", health: 10 };
+  const theirRobot = { id: "u4", ownerPlayerId: THEM, sal_code: "80001-0", unitTypeKey: "robot", health: 6 };
+  const elsewhere = { id: "u5", ownerPlayerId: ME, sal_code: "80002-0", unitTypeKey: "drone", health: 3 };
+  const detail = suburbDetailViewModel({
+    sal_code: "80001-0",
+    ownership: {},
+    occupancy: [myDrone1, myDrone2, myRobot, theirRobot, elsewhere],
+    factories: [],
+    members: MEMBERS,
+    myPlayerId: ME,
+  });
+  expect(detail.occupantGroups).toEqual(
+    expect.arrayContaining([
+      { ownerPlayerId: ME, unitTypeKey: "drone", count: 2 },
+      { ownerPlayerId: ME, unitTypeKey: "robot", count: 1 },
+      { ownerPlayerId: THEM, unitTypeKey: "robot", count: 1 },
+    ]),
+  );
+  expect(detail.occupantGroups).toHaveLength(3);
+});
+
+it("occupantGroups is empty when the selected suburb has no occupants", () => {
+  const detail = suburbDetailViewModel({
+    sal_code: "80001-0",
+    ownership: {},
+    occupancy: [],
+    factories: [],
+    members: MEMBERS,
+    myPlayerId: ME,
+  });
+  expect(detail.occupantGroups).toEqual([]);
+});
