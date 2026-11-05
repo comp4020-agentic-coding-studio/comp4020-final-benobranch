@@ -100,32 +100,6 @@
             role="application"
             aria-label="Canberra suburb map"
           >
-            <!-- ANU-036's postfx filter: static (never touched by map.js, unlike
-                 #map-capture-defs below), applied to the whole #map-svg via map.css's
-                 `filter: url(#map-pixelate-filter)` so the smooth vector suburb/stripe/
-                 progress-bar shapes read in the same register as the 32x32 pixel-art
-                 icons and the Determination font sitting next to them. A real blocky
-                 mosaic would need rasterizing this live, pannable/zoomable/tappable SVG
-                 to a low-res canvas — see issues/ANU-036.md's Notes for why that's not
-                 worth it here — so this fakes "pixelated" with a slight blur (softens
-                 anti-aliased vector edges) followed by per-channel color quantization
-                 (feComponentTransfer's `discrete` stepping, the same banding a low
-                 color-depth pixel-art palette would show). -->
-            <defs id="map-postfx-defs">
-              <!-- stdDeviation/x/y/width/height are in the filter's own user space, which
-                   for a CSS `filter: url(...)` on the root <svg> resolves against the
-                   element's rendered CSS-pixel box (map-container's layout size), not the
-                   internal viewBox units above — so "1.2" here means ~1.2 CSS px of blur
-                   regardless of current pan/zoom. -->
-              <filter id="map-pixelate-filter" x="-5%" y="-5%" width="110%" height="110%">
-                <feGaussianBlur in="SourceGraphic" stdDeviation="1.2" result="map-pixelate-blur" />
-                <feComponentTransfer in="map-pixelate-blur">
-                  <feFuncR type="discrete" tableValues="0 0.143 0.286 0.429 0.571 0.714 0.857 1" />
-                  <feFuncG type="discrete" tableValues="0 0.143 0.286 0.429 0.571 0.714 0.857 1" />
-                  <feFuncB type="discrete" tableValues="0 0.143 0.286 0.429 0.571 0.714 0.857 1" />
-                </feComponentTransfer>
-              </filter>
-            </defs>
             <!-- ANU-017's renderCapture: one <pattern> per rendered diagonal-stripe layer, referenced
                  by #map-ownership's overlay paths below. -->
             <defs id="map-capture-defs"></defs>

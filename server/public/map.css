@@ -139,13 +139,6 @@
   display: block;
   cursor: grab;
   user-select: none;
-  /* ANU-036: the #map-pixelate-filter <filter> defined in index.html (a slight
-     blur + per-channel color quantization) — applied here via CSS rather than
-     the element's own `filter` attribute so it's one visual knob, same split
-     as every other map-svg rule in this file. Filters don't affect hit-testing
-     (pointer-events/click targets resolve against the unfiltered geometry), so
-     pan/zoom/tap in map.js is untouched. */
-  filter: url("#map-pixelate-filter");
 }
 
 .map-svg:active {
@@ -154,11 +147,27 @@
 
 .suburb {
   fill: #16222a;
-  stroke: #0a4a42;
+  /* ANU-040 (replaces ANU-036's whole-map blur+quantize filter, which
+     washed out these borders and corrupted ownership fill color — see
+     issues/ANU-040.md): a bright, thick border instead of the previous
+     hairline, so it reads as "super visible" even before pixelation.
+     --accent-dim here (not --accent) leaves room for :hover/.selected
+     below to step up to the brighter --accent, same highlight contrast
+     the old #0a4a42 -> var(--accent) pair gave, just both ends brighter. */
+  stroke: var(--accent-dim);
+  stroke-width: 3;
+  /* shape-rendering: crispEdges disables anti-aliasing on this path's fill
+     and stroke, so curved/diagonal suburb borders rasterize as stair-stepped
+     pixel blocks instead of smooth lines — the "pixelate the boundaries"
+     effect, scoped to just these paths. It's a rasterization hint only: it
+     doesn't touch fill/stroke color, so ownership tints (renderOwnership's
+     inline `style="fill: ..."`) are unaffected, unlike ANU-036's filter.
+     Icon layers (dc/unit/base/factory markers) live in separate <g>s and
+     never had this property, so they're untouched too. */
+  shape-rendering: crispEdges;
   /* non-scaling-stroke means this width is in screen pixels, not map
-     units, regardless of current zoom — so it stays a hairline at any
+     units, regardless of current zoom — so it stays constant at any
      zoom level instead of scaling with the viewBox like the geometry. */
-  stroke-width: 1;
   vector-effect: non-scaling-stroke;
   transition: fill 0.1s ease;
 }
