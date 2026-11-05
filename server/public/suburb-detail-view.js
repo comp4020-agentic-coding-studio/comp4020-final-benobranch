@@ -18,10 +18,24 @@
  */
 
 /**
+ * One (owner, unit type) cluster among a suburb's occupants, for the
+ * Territory detail panel's occupant list — grouped the same way a large
+ * stack of units reads on the map (ANU-034's per-archetype marker counts),
+ * rather than one row per individual unit, which became an unreadable wall
+ * of identical "Drone — Beno (3 hp)" rows once a player had more than a
+ * handful of units at one suburb.
+ * @typedef {object} OccupantGroup
+ * @property {string} ownerPlayerId
+ * @property {string} unitTypeKey
+ * @property {number} count
+ */
+
+/**
  * @typedef {object} SuburbDetail
  * @property {string | null} ownerName
  * @property {string | null} ownerColor
  * @property {OccupantUnit[]} occupants
+ * @property {OccupantGroup[]} occupantGroups
  * @property {FactoryState | null} factory
  * @property {boolean} canBuildFactory
  * @property {MovableUnitGroup[]} movableUnitGroups
@@ -52,10 +66,20 @@ export function suburbDetailViewModel({ sal_code, ownership, occupancy, factorie
     countByType.set(unit.unitTypeKey, (countByType.get(unit.unitTypeKey) ?? 0) + 1);
   }
 
+  /** @type {Map<string, OccupantGroup>} */
+  const occupantGroupByKey = new Map();
+  for (const unit of occupants) {
+    const key = `${unit.ownerPlayerId}|${unit.unitTypeKey}`;
+    const existing = occupantGroupByKey.get(key);
+    if (existing) existing.count += 1;
+    else occupantGroupByKey.set(key, { ownerPlayerId: unit.ownerPlayerId, unitTypeKey: unit.unitTypeKey, count: 1 });
+  }
+
   return {
     ownerName: owner ? owner.name : null,
     ownerColor: owner ? owner.color : null,
     occupants,
+    occupantGroups: [...occupantGroupByKey.values()],
     factory,
     canBuildFactory: isOwnedByMe && !factory,
     // Grouped by type, counted at THIS suburb only — moveUnits' reachability
