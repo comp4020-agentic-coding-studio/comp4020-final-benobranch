@@ -498,6 +498,17 @@ button:not(:disabled):hover {
   padding: 1rem 0;
 }
 
+/* ANU-037: the Units tab's per-suburb subheading, grouping the unit-type
+   rows beneath it — plain text, not a bordered .roster-list li, so it
+   reads as a label rather than another unit row. */
+.roster-list__zone-heading {
+  background: none;
+  border: none;
+  padding: 0.4rem 0.2rem 0;
+  font-weight: bold;
+  color: var(--text-dim);
+}
+
 /* One row per unit type a factory auto-produces (ANU-022) — several of
    these stack inside buildProductionDisplay's wrapper, since a factory
    cycles every buildable type concurrently rather than queuing one. */
