@@ -134,6 +134,20 @@ it("serves the Lobby screen's map panel hidden by default, and no counter/bump c
   expect(document.querySelector("#last-bumped-by")).toBeNull();
 });
 
+// The lobby screen's own header (with its "← Browse" link) is hidden once a
+// started game goes fullscreen (style.css's `.lobby-screen--fullscreen >
+// .hud-bar` rule) — the map panel's header is the one place that stays
+// visible throughout, so it's where a way back to the menu has to live.
+it("serves a back-to-menu link inside the map panel's header, which stays visible once a game is fullscreen", async () => {
+  const res = await fetch(new URL("/", baseUrl));
+  const dom = new JSDOM(await res.text());
+  const { document } = dom.window;
+
+  const backLink = document.querySelector("#map-panel .hud-bar a.back-link");
+  expect(backLink).not.toBeNull();
+  expect(backLink?.getAttribute("href")).toBe("#/home");
+});
+
 it("serves the map's unit/factory/ownership SVG layers for ANU-020's renderUnits/renderFactories/renderOwnership to mount into", async () => {
   const res = await fetch(new URL("/", baseUrl));
   const dom = new JSDOM(await res.text());

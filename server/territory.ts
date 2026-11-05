@@ -19,7 +19,7 @@ import type { SuburbCaptureState } from "./protocol.ts";
  * producing one unit, short enough that a real-time siege still feels
  * responsive within a session.
  */
-export const CAPTURE_DURATION_MS = 20_000;
+export const CAPTURE_DURATION_MS = 60_000;
 
 export interface CaptureTransfer {
   salCode: string;

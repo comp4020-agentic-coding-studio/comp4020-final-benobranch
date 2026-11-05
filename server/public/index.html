@@ -84,6 +84,11 @@
 
       <section id="map-panel" class="panel map-panel" hidden>
         <header class="hud-bar">
+          <!-- The outer lobby-screen header's "← Browse" link is hidden once
+               a game goes fullscreen (style.css's .lobby-screen--fullscreen
+               rule) — this header stays visible throughout, so it's the one
+               place a started game can offer a way back to the menu. -->
+          <a href="#/home" class="back-link">← Menu</a>
           <span class="hud-bar__title">DETERRENT</span>
         </header>
         <div id="map-container" class="map-container">

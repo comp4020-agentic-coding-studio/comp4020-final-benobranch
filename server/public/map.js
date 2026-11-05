@@ -255,25 +255,15 @@ function initOnce(data, geometry) {
   setupPanZoomAndTap(geometry);
 }
 
+// ANU-0??: the spawn-ring circle markers were removed from the map (left
+// each spawn suburb indistinguishable on the suburb layer itself, same as
+// before any base/ownership marker exists) — #map-spawns stays in the DOM
+// (spec/map-geometry.test.ts checks for it) and currentLobbySize still
+// updates here, since describe()'s "Spawn candidate" tooltip text and the
+// capacity-guard in mountMap both depend on it independent of the visual.
 function renderSpawns(/** @type {string} */ lobbySize) {
   spawnLayer.replaceChildren();
   currentLobbySize = lobbySize;
-  const entry = mapData?.spawn_table_by_lobby_size[lobbySize];
-  if (!entry) return;
-  for (const name of entry.spawns) {
-    const suburb = nameToSuburb.get(name);
-    if (!suburb) continue;
-    const geo = sal_codeToGeo.get(suburb.sal_code);
-    if (!geo) continue;
-    const [x, y] = geo.label_point;
-    const marker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    marker.setAttribute("cx", String(x));
-    marker.setAttribute("cy", String(y));
-    marker.setAttribute("r", "550");
-    marker.setAttribute("class", "spawn-marker");
-    marker.dataset.salCode = suburb.sal_code;
-    spawnLayer.appendChild(marker);
-  }
 }
 
 /**
