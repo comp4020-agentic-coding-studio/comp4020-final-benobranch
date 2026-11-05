@@ -61,8 +61,14 @@ const NODES_BY_ID = new Map(SKILL_NODES.map((n) => [n.id, n]));
  * exactly doubles speed on its own). A placeholder curve, same footing as
  * server/skill-tree.ts's other tuning constants — PLAN.md lists the exact
  * TFLOPS-to-research-speed curve as still open.
+ *
+ * Exported (ANU-031) so server/index.ts can put the exact same number on
+ * the `skillTree` broadcast (`ServerSkillTree.speedMultiplier`) instead of
+ * the client reimplementing this curve in server/public/skill-tree-visual.js
+ * — one source of truth, so a future tuning change here can't silently
+ * drift from what the sidebar displays.
  */
-function speedMultiplier(tflops: number): number {
+export function speedMultiplier(tflops: number): number {
   return 1 + tflops / 100;
 }
 

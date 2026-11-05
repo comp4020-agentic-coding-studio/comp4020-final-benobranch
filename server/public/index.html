@@ -135,9 +135,12 @@
           <button type="button" class="sidebar-tab" data-panel="factories">Factories</button>
           <button type="button" class="sidebar-tab" data-panel="research">Research</button>
         </nav>
+        <!-- ANU-031: TFLOPS dropped from here — it isn't a second currency
+             alongside scrap (ANU-019), it's a research-speed stat, shown
+             instead on the Research panel below next to the multiplier it
+             produces. -->
         <p id="sidebar-economy" class="sidebar-economy" hidden>
           <span class="sidebar-economy__item"><span id="sidebar-scrap">0</span> scrap</span>
-          <span class="sidebar-economy__item"><span id="sidebar-tflops">0</span> TFLOPS</span>
         </p>
 
         <section id="panel-territory" class="sidebar-panel">
@@ -159,6 +162,16 @@
         <!-- ANU-029: skill tree. Research is free; held data centers' TFLOPS speed it up. One node at a time. -->
         <section id="panel-research" class="sidebar-panel" hidden>
           <h2>Research</h2>
+          <!-- ANU-031: live TFLOPS (sum of currently-held data centers,
+               server/tflops.ts) next to the exact speedMultiplier it
+               produces (server/skill-tree.ts) — always visible here, not
+               just folded into an in-progress node's own progress bar, so
+               holding more/stronger data centers visibly pays off even with
+               nothing queued. -->
+          <p class="skill-tree__tflops">
+            <span id="skill-tree-tflops">0</span> TFLOPS
+            <span class="subtle">(<span id="skill-tree-speed-multiplier">1.0</span>x research speed)</span>
+          </p>
           <p class="subtle skill-tree__hint">One project at a time. More TFLOPS = faster research.</p>
           <ul id="skill-tree-list" class="roster-list skill-tree"></ul>
         </section>

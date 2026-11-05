@@ -43,16 +43,21 @@ export { suburbDetailViewModel };
  * @property {OccupantUnit[]} occupancy
  * @property {FactoryState[]} factories
  * @property {UnitTypeCatalogEntry[]} unitCatalog
- * @property {{scrap: number, tflops: number}} economy
+ * @property {{scrap: number}} economy
  * @property {SkillTreeState | null} skillTree - null until the first
  *   `skillTree` message arrives.
  */
 
 /**
  * The parts of the server's `skillTree` message the Research tab needs.
+ * ANU-031: tflops/speedMultiplier live here, not on `economy` — they're a
+ * research-speed stat the Research tab reads directly, not a currency
+ * figure shown alongside scrap.
  * @typedef {object} SkillTreeState
  * @property {string[]} unlockedNodeIds
  * @property {import("./skill-tree-visual.js").ResearchingState | null} researching
+ * @property {number} tflops
+ * @property {number} speedMultiplier
  */
 
 const sidebarEl = /** @type {HTMLElement} */ (document.getElementById("sidebar"));
@@ -60,7 +65,6 @@ const handleEl = /** @type {HTMLButtonElement} */ (document.getElementById("side
 const tabsEl = /** @type {HTMLElement} */ (document.getElementById("sidebar-tabs"));
 const economyEl = /** @type {HTMLElement} */ (document.getElementById("sidebar-economy"));
 const scrapEl = /** @type {HTMLElement} */ (document.getElementById("sidebar-scrap"));
-const tflopsEl = /** @type {HTMLElement} */ (document.getElementById("sidebar-tflops"));
 const panels = {
   territory: /** @type {HTMLElement} */ (document.getElementById("panel-territory")),
   units: /** @type {HTMLElement} */ (document.getElementById("panel-units")),
@@ -71,6 +75,8 @@ const suburbDetailEl = /** @type {HTMLElement} */ (document.getElementById("subu
 const unitListEl = /** @type {HTMLElement} */ (document.getElementById("unit-list"));
 const factoryListEl = /** @type {HTMLElement} */ (document.getElementById("factory-list"));
 const skillTreeListEl = /** @type {HTMLElement} */ (document.getElementById("skill-tree-list"));
+const skillTreeTflopsEl = /** @type {HTMLElement} */ (document.getElementById("skill-tree-tflops"));
+const skillTreeSpeedMultiplierEl = /** @type {HTMLElement} */ (document.getElementById("skill-tree-speed-multiplier"));
 
 /** @typedef {"territory" | "units" | "factories" | "research"} SidebarTab */
 
@@ -502,6 +508,10 @@ function buildSkillNode(node) {
 function renderSkillTree() {
   if (!currentState) return;
   const tree = currentState.skillTree;
+  // ANU-031: live TFLOPS and the speed multiplier it produces, shown
+  // regardless of whether anything is currently researching.
+  skillTreeTflopsEl.textContent = String(tree?.tflops ?? 0);
+  skillTreeSpeedMultiplierEl.textContent = (tree?.speedMultiplier ?? 1).toFixed(1);
   const { nodes } = skillTreeVisual({ unlockedNodeIds: tree?.unlockedNodeIds ?? [], researching: tree?.researching ?? null });
   const signature = nodes
     .map((n) => `${n.id}:${n.unlocked ? "u" : n.researching ? "r" : n.purchasable ? "p" : n.lockedReason}`)
@@ -577,7 +587,6 @@ export function updateSidebarState(state) {
   economyEl.hidden = false;
   handleEl.hidden = false;
   scrapEl.textContent = String(state.economy.scrap);
-  tflopsEl.textContent = String(state.economy.tflops);
   renderSuburbDetail();
   renderUnitList();
   renderFactoryList();

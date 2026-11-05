@@ -129,6 +129,7 @@ it("sends a fresh skillTree message (empty unlocked set, nothing researching, tf
   expect(skillTreeMsg.unlockedNodeIds).toEqual([]);
   expect(skillTreeMsg.researching).toBeNull();
   expect(skillTreeMsg.tflops).toBe(0); // no data center held
+  expect(skillTreeMsg.speedMultiplier).toBe(1); // ANU-031: server/skill-tree.ts's speedMultiplier(0) === 1
 
   await closeAndWait(reconnected);
 });

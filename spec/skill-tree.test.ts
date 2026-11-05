@@ -18,7 +18,7 @@ import { createTerritory } from "../server/territory.ts";
 import { createUnits } from "../server/units.ts";
 import { createFactories, FACTORY_BUILD_COST_SCRAP } from "../server/factories.ts";
 import { createTflopsSource } from "../server/tflops.ts";
-import { createSkillTree } from "../server/skill-tree.ts";
+import { createSkillTree, speedMultiplier } from "../server/skill-tree.ts";
 import { DEFAULT_PERK_MULTIPLIERS } from "../server/perks.ts";
 
 const mapData = JSON.parse(readFileSync("scripts/map/data/map.json", "utf8")) as { suburbs: { sal_code: string }[] };
@@ -54,6 +54,14 @@ function rewindResearch(store: ReturnType<typeof openStore>, lobbyId: string, pl
     .prepare("UPDATE skill_research SET started_at = ? WHERE lobby_id = ? AND player_id = ?")
     .run(pastIso, lobbyId, playerId);
 }
+
+// ANU-031: speedMultiplier is exported so server/index.ts can put the exact
+// same number on the skillTree broadcast (ServerSkillTree.speedMultiplier)
+// instead of the Research tab reimplementing this curve client-side.
+it("speedMultiplier is 1x at 0 TFLOPS and 2x at 100 TFLOPS (one mega data center)", () => {
+  expect(speedMultiplier(0)).toBe(1);
+  expect(speedMultiplier(100)).toBe(2);
+});
 
 it("starting research on a root (no-prerequisite) node succeeds immediately with no TFLOPS cost", () => {
   const { store, skillTree, lobbyId, playerId } = setup();

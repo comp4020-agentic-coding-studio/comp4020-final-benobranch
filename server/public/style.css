@@ -595,6 +595,23 @@ button:not(:disabled):hover {
   display: none;
 }
 
+/* ANU-031: live TFLOPS + the research-speed multiplier it produces — same
+   tabular-nums/accent-span treatment .sidebar-economy__item already uses
+   for scrap, moved here since TFLOPS is a Research-tab stat, not a second
+   currency line next to scrap. */
+.skill-tree__tflops {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.skill-tree__tflops #skill-tree-tflops,
+.skill-tree__tflops #skill-tree-speed-multiplier {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .skill-tree__hint {
   margin: -0.4rem 0 0;
   font-size: 0.78rem;
