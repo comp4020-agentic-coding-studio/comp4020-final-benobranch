@@ -139,6 +139,13 @@
   display: block;
   cursor: grab;
   user-select: none;
+  /* ANU-036: the #map-pixelate-filter <filter> defined in index.html (a slight
+     blur + per-channel color quantization) — applied here via CSS rather than
+     the element's own `filter` attribute so it's one visual knob, same split
+     as every other map-svg rule in this file. Filters don't affect hit-testing
+     (pointer-events/click targets resolve against the unfiltered geometry), so
+     pan/zoom/tap in map.js is untouched. */
+  filter: url("#map-pixelate-filter");
 }
 
 .map-svg:active {
