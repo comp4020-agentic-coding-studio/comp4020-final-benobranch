@@ -115,7 +115,7 @@ let sal_codeToGeo = new Map();
 let mapData = null;
 
 let initialised = false;
-// Guards against re-rendering the same lobby's spawn ring on every
+// Guards against re-resolving the same lobby's spawn table on every
 // lobbyState broadcast (presence flips, etc.) — app.js calls mountMap()
 // every time the lobby screen re-renders, not just once.
 let mountedLobbyId = /** @type {string | null} */ (null);
@@ -269,7 +269,7 @@ function renderSpawns(/** @type {string} */ lobbySize) {
 /**
  * Mounts (or re-targets) the map panel for a specific started lobby —
  * idempotent per (lobbyId, capacity) pair, since app.js re-renders the
- * lobby screen on every `lobbyState` broadcast. The spawn-ring preview is
+ * lobby screen on every `lobbyState` broadcast. The resolved spawn table is
  * locked to this lobby's own capacity — there's a real lobby here, not an
  * abstract size picker.
  * @param {string} lobbyId
@@ -287,7 +287,7 @@ export async function mountMap(lobbyId, capacity, selectCallback) {
   renderSpawns(String(capacity));
 }
 
-/** Clears mount state so a later mountMap() for a different lobby redraws the spawn ring. */
+/** Clears mount state so a later mountMap() for a different lobby re-resolves the spawn table. */
 export function unmountMap() {
   mountedLobbyId = null;
   // ANU-034: otherwise a fresh lobby's first renderUnits call would diff
@@ -328,7 +328,7 @@ export function renderOwnership(ownership, members) {
  * the base was ever captured. Same full-redraw precedent as
  * renderOwnership/renderUnits/renderFactories — called alongside
  * renderOwnership since both depend on the same `ownership` broadcast.
- * Decorative only (like `.dc-marker`/`.spawn-marker`): no dataset/click
+ * Decorative only (like `.dc-marker`): no dataset/click
  * handling, since a base marker isn't a selectable game object.
  * @param {Record<string, string>} ownership - sal_code -> owner playerId, sparse
  * @param {PlayerPresence[]} members

@@ -177,15 +177,7 @@
   pointer-events: none;
 }
 
-.spawn-marker {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 2.5;
-  vector-effect: non-scaling-stroke;
-  pointer-events: none; /* see .dc-marker — same overhang-at-zoom reasoning */
-}
-
-/* ANU-025: a player's base — decorative, same as .dc-marker/.spawn-marker,
+/* ANU-025: a player's base — decorative, same as .dc-marker,
    not a selectable game object (no dataset/click handling in renderBases). */
 .base-marker {
   pointer-events: none;
@@ -268,21 +260,16 @@
   background-image: url("icons/data-center-standard.png");
 }
 
-.legend-dot--spawn {
-  background: transparent;
-  border: 2px solid var(--accent);
-}
-
 .map-attribution {
   margin: 0;
   font-size: 0.7rem;
   color: var(--text-dim);
 }
 
-/* ANU-020: unit/factory icons, rendered on top of the suburb/data-center/
-   spawn layers so a tap always resolves to the unit/factory above whatever
+/* ANU-020: unit/factory icons, rendered on top of the suburb/data-center
+   layers so a tap always resolves to the unit/factory above whatever
    suburb it's standing in (map.js's click handler checks these datasets
-   first). Unlike .dc-marker/.spawn-marker, these take pointer events —
+   first). Unlike .dc-marker, these take pointer events —
    they're selectable, not purely decorative. */
 .unit-marker {
   cursor: pointer;
@@ -365,7 +352,7 @@
 /* ANU-017: diagonal-stripe contest overlays (map.js's renderCapture), drawn
    into #map-ownership on top of ANU-020's plain ownership fill on the
    .suburb paths below. pointer-events: none so taps still resolve to the
-   underlying suburb path, same reasoning as .dc-marker/.spawn-marker. */
+   underlying suburb path, same reasoning as .dc-marker. */
 .capture-stripe {
   pointer-events: none;
   opacity: 0.85;
