@@ -373,8 +373,12 @@
    decorative overlay. */
 .transit-arrow__line {
   fill: none;
-  stroke-width: 24;
-  stroke-dasharray: 48 36;
+  /* vector-effect below means this width is in SCREEN pixels, same as
+     .suburb's boundary stroke (stroke-width: 3) — a dashed travel line
+     should read as a thin overlay next to that boundary, not thicker than
+     it; the original 24px dwarfed every other line on the map. */
+  stroke-width: 2;
+  stroke-dasharray: 6 5;
   vector-effect: non-scaling-stroke;
   opacity: 0.8;
   pointer-events: none;
@@ -383,14 +387,14 @@
 
 /* Marches the dash pattern along the line so an in-transit arrow reads as
    actively moving, not just a static dashed line — the dash offset shifts
-   by exactly one dash+gap cycle (48 + 36) per iteration so the loop has no
+   by exactly one dash+gap cycle (6 + 5) per iteration so the loop has no
    visible seam. */
 @keyframes transit-line-march {
   from {
     stroke-dashoffset: 0;
   }
   to {
-    stroke-dashoffset: -84;
+    stroke-dashoffset: -11;
   }
 }
 
