@@ -302,6 +302,14 @@ export interface ServerSkillTree {
   researching: { nodeId: string; startedAt: string; progressFraction: number } | null;
   multipliers: import("./perks.ts").PerkMultipliers;
   tflops: number;
+  /**
+   * `server/skill-tree.ts`'s `speedMultiplier(tflops)` curve, computed
+   * server-side and sent alongside the raw `tflops` figure (ANU-031) so the
+   * Research tab can show "holding this much TFLOPS gets you Nx research
+   * speed" without the client reimplementing — and risking drifting from —
+   * that curve itself.
+   */
+  speedMultiplier: number;
 }
 
 export interface LobbySummary {

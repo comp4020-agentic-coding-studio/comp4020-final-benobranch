@@ -125,7 +125,10 @@ let occupancy = [];
 let factories = [];
 /** @type {UnitTypeCatalogEntry[]} */
 let unitCatalog = [];
-let economy = { scrap: 0, tflops: 0 };
+// ANU-031: tflops dropped here — the server still sends it on `economy` but
+// it's displayed from `skillTree` instead (a research-speed stat, not a
+// scrap-like balance).
+let economy = { scrap: 0 };
 /** @type {import("./sidebar.js").SkillTreeState | null} ANU-029: this player's latest `skillTree` message. */
 let skillTree = null;
 let sidebarMounted = false;
@@ -388,13 +391,21 @@ function handleMessage(/** @type {ServerMessage} */ msg) {
     setUnitCatalog(unitCatalog);
     updateSidebar();
   } else if (msg.type === "economy") {
-    economy = { scrap: msg.scrap, tflops: msg.tflops };
+    economy = { scrap: msg.scrap };
     updateSidebar();
   } else if (msg.type === "skillTree") {
     // Per-player on the server side already; the playerId check just guards
     // against ever rendering someone else's tree.
     if (msg.playerId !== myPlayerId) return;
-    skillTree = { unlockedNodeIds: msg.unlockedNodeIds, researching: msg.researching };
+    // ANU-031: tflops/speedMultiplier ride along on this message (not
+    // `economy`) because the Research tab is where they're shown now — see
+    // sidebar.js's renderSkillTree.
+    skillTree = {
+      unlockedNodeIds: msg.unlockedNodeIds,
+      researching: msg.researching,
+      tflops: msg.tflops,
+      speedMultiplier: msg.speedMultiplier,
+    };
     updateSidebar();
   } else if (msg.type === "nameRequired") {
     navigateOnNextLobbyState = false;

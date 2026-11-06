@@ -9,7 +9,7 @@ import { openStore, type StoredLobby } from "./store.ts";
 import { createTerritory } from "./territory.ts";
 import { createUnits, listUnitTypes } from "./units.ts";
 import { createFactories } from "./factories.ts";
-import { createSkillTree } from "./skill-tree.ts";
+import { createSkillTree, speedMultiplier as skillTreeSpeedMultiplier } from "./skill-tree.ts";
 import { createTflopsSource } from "./tflops.ts";
 import { elapsedMs } from "./time.ts";
 import { renderReadmePage } from "./readme-page.ts";
@@ -183,13 +183,15 @@ function sendEconomyToPlayer(lobbyId: string, playerId: string): void {
 // sends its own one-off copy directly to the just-connected socket instead.
 function sendSkillTreeToPlayer(lobbyId: string, playerId: string): void {
   const result = skillTree.getState(lobbyId, playerId);
+  const tflops = tflopsSource.getTflops(lobbyId, playerId);
   const message: ServerMessage = {
     type: "skillTree",
     playerId,
     unlockedNodeIds: result.unlockedNodeIds,
     researching: result.researching,
     multipliers: store.perks.getPerkMultipliers(lobbyId, playerId),
-    tflops: tflopsSource.getTflops(lobbyId, playerId),
+    tflops,
+    speedMultiplier: skillTreeSpeedMultiplier(tflops),
   };
   for (const [socket, meta] of sockets) {
     if (meta.playerId === playerId) send(socket, message);
@@ -347,13 +349,15 @@ wss.on("connection", (socket) => {
       if (lobbyId) sendEconomyToPlayer(lobbyId, playerId);
       if (lobbyId) {
         const result = skillTree.getState(lobbyId, playerId);
+        const tflops = tflopsSource.getTflops(lobbyId, playerId);
         send(socket, {
           type: "skillTree",
           playerId,
           unlockedNodeIds: result.unlockedNodeIds,
           researching: result.researching,
           multipliers: store.perks.getPerkMultipliers(lobbyId, playerId),
-          tflops: tflopsSource.getTflops(lobbyId, playerId),
+          tflops,
+          speedMultiplier: skillTreeSpeedMultiplier(tflops),
         });
       }
       if (lobbyId) broadcastLobbyState(lobbyId); // this player's online status just changed
