@@ -46,14 +46,15 @@ export function unitVisual(unit, maxHealth) {
   }
   return {
     icon: archetype,
-    // Only a drone (base or mk2) can be mid-flight over territory it
-    // doesn't own (robots' moves are adjacency-restricted, so they're never
-    // airborne between suburbs) — see OccupantUnit's destinationSalCode/
-    // moveStartedAt in server/protocol.ts. Nothing sets those fields yet
-    // (moves are instant as of this issue; see issues/ANU-014.md
-    // Resolution), so every unit currently renders "grounded" in practice —
-    // this branch exists for whichever future issue adds travel time.
-    state: archetype === "drone" && unit.destinationSalCode ? "in-transit" : "grounded",
+    // ANU-038 gave both archetypes real travel time — a robot's single
+    // adjacency hop now takes real time and shows the same in-transit state
+    // a drone's flight does (previously this branch was drone-only, back
+    // when travel was instant and only a drone's unrestricted "fly" move
+    // was ever imagined to need a mid-flight visual at all; see
+    // issues/ANU-014.md's original Resolution). destinationSalCode is set
+    // for exactly as long as server/units.ts's settleArrivals hasn't yet
+    // resolved this unit's dispatch.
+    state: unit.destinationSalCode ? "in-transit" : "grounded",
     healthFraction: maxHealth > 0 ? Math.max(0, Math.min(1, unit.health / maxHealth)) : 0,
   };
 }

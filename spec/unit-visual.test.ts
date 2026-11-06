@@ -37,12 +37,12 @@ it("a unit with no destinationSalCode reports state 'grounded'", () => {
   expect(grounded.state).toBe("grounded");
 });
 
-it("a robot never reports 'in-transit' even if destinationSalCode were set — robots don't fly", () => {
+it("a robot also reports 'in-transit' when destinationSalCode is set (ANU-038 gave both archetypes real travel time)", () => {
   const robot = unitVisual(
     { ...BASE_UNIT, unitTypeKey: "robot", destinationSalCode: "80002", moveStartedAt: "2026-11-03T00:00:00.000Z" },
     6,
   );
-  expect(robot.state).toBe("grounded");
+  expect(robot.state).toBe("in-transit");
 });
 
 it("ANU-016's skill-tree-gated 'mk2' variants render with their base archetype's icon, not a new one", () => {

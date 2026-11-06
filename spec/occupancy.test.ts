@@ -4,9 +4,18 @@
 // ANU-027 replaced the one-unit-at-a-time moveUnit message with moveUnits
 // (a per-type count, from one suburb to another) — the move test below sends
 // a single drone via a `{ drone: 1 }` order instead.
-import { readFileSync } from "node:fs";
-import { expect, inject, it } from "vitest";
+//
+// ANU-038: the move test spawns its own time-scaled server (same pattern as
+// spec/combat.test.ts) — REAL_SAL_CODE/ANOTHER_REAL_SAL_CODE are two
+// arbitrary, possibly far-apart suburbs, and a drone's travel time at
+// GAME_TIME_SCALE=1 over an arbitrary distance could be well past any
+// reasonable waitFor budget against the shared, unscaled APP_URL server.
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, expect, inject, it } from "vitest";
 import WebSocket from "ws";
+import { spawnServer, type SpawnedServer } from "./lib/spawn-server.ts";
 
 const baseUrl = inject("baseUrl");
 
@@ -26,9 +35,9 @@ interface Client {
   messages: ServerMessage[];
 }
 
-function connect(token?: string): Promise<Client> {
+function connect(token?: string, url: string = baseUrl): Promise<Client> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${baseUrl.replace(/^http/, "ws")}/ws`);
+    const ws = new WebSocket(`${url.replace(/^http/, "ws")}/ws`);
     const messages: ServerMessage[] = [];
     ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
     ws.on("error", reject);
@@ -60,8 +69,8 @@ async function closeAndWait(client: Client): Promise<void> {
   await new Promise((resolve) => client.ws.once("close", resolve));
 }
 
-async function createStartedLobby(name: string): Promise<{ creator: Client; lobbyId: string }> {
-  const creator = await connect();
+async function createStartedLobby(name: string, url: string = baseUrl): Promise<{ creator: Client; lobbyId: string }> {
+  const creator = await connect(undefined, url);
   send(creator, { type: "createLobby", name, capacity: 4, callsign: "occupant" });
   const created = await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { name: string }).name === name);
   const lobbyId = (created.lobby as { lobbyId: string }).lobbyId;
@@ -92,8 +101,20 @@ it("rejects placing a unit in a suburb that doesn't exist", async () => {
   await closeAndWait(creator);
 });
 
-it("moves a placed unit to a different real suburb via moveUnits", async () => {
-  const { creator } = await createStartedLobby(`occupancy-move-${Date.now()}`);
+const moveTestDataDir = mkdtempSync(join(tmpdir(), "anu038-occupancy-move-"));
+const moveTestPort = 8111; // 8110 is spec/move-units-protocol.test.ts (ANU-038)
+let moveTestServer: SpawnedServer | undefined;
+afterAll(async () => {
+  await moveTestServer?.stop();
+  rmSync(moveTestDataDir, { recursive: true, force: true });
+});
+
+it("moves a placed unit to a different real suburb via moveUnits, once travel time elapses", async () => {
+  // A high scale so a drone's design travel time over REAL_SAL_CODE/
+  // ANOTHER_REAL_SAL_CODE's (arbitrary, possibly large) distance resolves
+  // within a real second or two — see the file-header comment.
+  moveTestServer = await spawnServer({ port: moveTestPort, dataDir: moveTestDataDir, gameTimeScale: 500 });
+  const { creator } = await createStartedLobby(`occupancy-move-${Date.now()}`, moveTestServer.baseUrl);
 
   // A drone, not a robot: this test exercises the move primitive itself
   // (ANU-013), not movement-mode reachability rules — those are ANU-014's
@@ -111,12 +132,13 @@ it("moves a placed unit to a different real suburb via moveUnits", async () => {
     (m) =>
       m.type === "occupancy" &&
       (m.units as { id: string; sal_code: string }[]).some((u) => u.id === unitId && u.sal_code === ANOTHER_REAL_SAL_CODE),
+    4000,
   );
   const occupantIds = (moved.units as { id: string; sal_code: string }[]).filter((u) => u.sal_code === REAL_SAL_CODE);
   expect(occupantIds.find((u) => u.id === unitId), "the unit should no longer occupy its original suburb").toBeUndefined();
 
   await closeAndWait(creator);
-});
+}, 10_000);
 
 it("sends current occupancy on reconnect, not just on the next change", async () => {
   const creatorForToken = await connect();

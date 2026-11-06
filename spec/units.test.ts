@@ -214,9 +214,25 @@ it("placeUnit stays unrestricted by adjacency (ANU-017's capture-contest tests r
   store.close();
 });
 
-// --- moveUnits (ANU-027): Risk-style bulk move/attack, one order per call --- //
+// --- moveUnits (ANU-027, travel time added by ANU-038): Risk-style bulk
+// move/attack, one order per call. A valid order only DISPATCHES now — it
+// stamps destination_sal_code/move_started_at and returns immediately,
+// deciding nothing; settleArrivals resolves each dispatched unit once its
+// travel time (real suburb distance / the unit type's speed) has elapsed.
+// Every test below backdates move_started_at far enough into the past that
+// settleArrivals treats travel as already complete, so these can assert on
+// the resolved outcome without a real sleep — same backdating convention
+// spec/capture.test.ts's backdateCapture uses for CAPTURE_DURATION_MS. --- //
 
-it("moveUnits splits a count across multiple types, moving exactly that many of each and leaving the rest at the source", () => {
+/** Pushes every dispatched unit's move_started_at far enough into the past that settleArrivals treats its travel as complete, regardless of archetype speed or distance. */
+function forceArrival(store: ReturnType<typeof openStore>, unitIds: string[]): void {
+  const longAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  for (const unitId of unitIds) {
+    store.db.prepare("UPDATE units SET move_started_at = ? WHERE id = ?").run(longAgo, unitId);
+  }
+}
+
+it("moveUnits dispatches (not resolves) a valid order: units are in transit, not yet relocated", () => {
   const { store, lobbyId, owner } = setup();
   const units = createUnits(store.db);
   for (let i = 0; i < 5; i++) units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "drone");
@@ -225,12 +241,39 @@ it("moveUnits splits a count across multiple types, moving exactly that many of 
   const result = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, ADJACENT_SAL_CODE, { drone: 2, robot: 1 });
   expect(result.ok).toBe(true);
   if (!result.ok) throw new Error("unreachable");
-  expect(result.outcomes).toHaveLength(3);
-  expect(result.outcomes.every((o) => o.outcome === "moved")).toBe(true);
+  expect(result.dispatchedUnitIds).toHaveLength(3);
+
+  // Still at the ORIGIN, not the destination — dispatch alone never moves
+  // anything (issues/ANU-038.md's confirmed "resolve on arrival" rule).
+  const dispatched = units.getOccupancy(lobbyId).filter((u) => result.dispatchedUnitIds.includes(u.id));
+  expect(dispatched.every((u) => u.sal_code === SPAWN_SAL_CODE)).toBe(true);
+  expect(dispatched.every((u) => u.destinationSalCode === ADJACENT_SAL_CODE)).toBe(true);
+
+  // The 2 drones/1 robot NOT selected stay fully grounded (no destination).
+  const atSource = units.getOccupancy(lobbyId).filter((u) => u.sal_code === SPAWN_SAL_CODE);
+  expect(atSource.filter((u) => u.unitTypeKey === "drone" && !u.destinationSalCode)).toHaveLength(3);
+  expect(atSource.filter((u) => u.unitTypeKey === "robot" && !u.destinationSalCode)).toHaveLength(2);
+  store.close();
+});
+
+it("settleArrivals resolves a dispatched order once travel time has elapsed, relocating undefended arrivals", () => {
+  const { store, lobbyId, owner } = setup();
+  const units = createUnits(store.db);
+  for (let i = 0; i < 5; i++) units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "drone");
+  for (let i = 0; i < 3; i++) units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "robot");
+
+  const dispatch = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, ADJACENT_SAL_CODE, { drone: 2, robot: 1 });
+  if (!dispatch.ok) throw new Error("unreachable");
+  forceArrival(store, dispatch.dispatchedUnitIds);
+
+  const outcomes = units.settleArrivals(lobbyId);
+  expect(outcomes).toHaveLength(3);
+  expect(outcomes.every((o) => o.outcome === "moved")).toBe(true);
 
   const atDestination = units.getOccupancy(lobbyId).filter((u) => u.sal_code === ADJACENT_SAL_CODE);
   expect(atDestination.filter((u) => u.unitTypeKey === "drone")).toHaveLength(2);
   expect(atDestination.filter((u) => u.unitTypeKey === "robot")).toHaveLength(1);
+  expect(atDestination.every((u) => u.destinationSalCode === undefined)).toBe(true);
 
   const atSource = units.getOccupancy(lobbyId).filter((u) => u.sal_code === SPAWN_SAL_CODE);
   expect(atSource.filter((u) => u.unitTypeKey === "drone")).toHaveLength(3);
@@ -238,7 +281,26 @@ it("moveUnits splits a count across multiple types, moving exactly that many of 
   store.close();
 });
 
-it("moveUnits rejects an order requesting more of a type than currently sit at the source, without moving anything", () => {
+it("settleArrivals leaves a unit's travel untouched before its travel time has elapsed", () => {
+  const { store, lobbyId, owner } = setup();
+  const units = createUnits(store.db);
+  units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "drone");
+
+  const dispatch = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, ADJACENT_SAL_CODE, { drone: 1 });
+  if (!dispatch.ok) throw new Error("unreachable");
+  // No forceArrival here — move_started_at is "now," so travel time (a real
+  // positive duration for a real distance) can't have elapsed yet.
+
+  const outcomes = units.settleArrivals(lobbyId);
+  expect(outcomes).toHaveLength(0);
+
+  const unit = units.getOccupancy(lobbyId).find((u) => u.id === dispatch.dispatchedUnitIds[0])!;
+  expect(unit.sal_code).toBe(SPAWN_SAL_CODE);
+  expect(unit.destinationSalCode).toBe(ADJACENT_SAL_CODE);
+  store.close();
+});
+
+it("moveUnits rejects an order requesting more of a type than currently sit at the source, without dispatching anything", () => {
   const { store, lobbyId, owner } = setup();
   const units = createUnits(store.db);
   units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "drone");
@@ -246,8 +308,8 @@ it("moveUnits rejects an order requesting more of a type than currently sit at t
   const result = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, ADJACENT_SAL_CODE, { drone: 2 });
   expect(result).toEqual({ ok: false, reason: "insufficient-units" });
 
-  const atDestination = units.getOccupancy(lobbyId).filter((u) => u.sal_code === ADJACENT_SAL_CODE);
-  expect(atDestination).toHaveLength(0);
+  const inTransit = units.getOccupancy(lobbyId).filter((u) => u.destinationSalCode);
+  expect(inTransit).toHaveLength(0);
   store.close();
 });
 
@@ -260,11 +322,11 @@ it("moveUnits rejects the WHOLE order when any requested type can't reach the de
   const result = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, NON_ADJACENT_SAL_CODE, { drone: 1, robot: 1 });
   expect(result).toEqual({ ok: false, reason: "unreachable" });
 
-  // Not even the drone (which COULD individually reach) should have moved —
-  // issues/ANU-027.md: "rejected for the whole order ... rather than
-  // silently moving the drones and dropping the robots."
-  const atDestination = units.getOccupancy(lobbyId).filter((u) => u.sal_code === NON_ADJACENT_SAL_CODE);
-  expect(atDestination).toHaveLength(0);
+  // Not even the drone (which COULD individually reach) should have been
+  // dispatched — issues/ANU-027.md: "rejected for the whole order ... rather
+  // than silently moving the drones and dropping the robots."
+  const inTransit = units.getOccupancy(lobbyId).filter((u) => u.destinationSalCode);
+  expect(inTransit).toHaveLength(0);
   store.close();
 });
 
@@ -278,27 +340,85 @@ it("moveUnits rejects an order with no positive counts (nothing selected)", () =
   store.close();
 });
 
-it("moveUnits against a defended destination resolves combat per unit in order — a unit killed never reaches the destination", () => {
+it("an already in-transit unit can't be dispatched again until it arrives", () => {
+  const { store, lobbyId, owner } = setup();
+  const units = createUnits(store.db);
+  units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "drone");
+
+  const first = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, ADJACENT_SAL_CODE, { drone: 1 });
+  expect(first.ok).toBe(true);
+
+  // The same (only) drone is still mid-flight — selectOwnedUnitsOfTypeAt
+  // excludes units with a destination_sal_code set, so there's nothing left
+  // at SPAWN_SAL_CODE to select a second time.
+  const second = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, NON_ADJACENT_SAL_CODE, { drone: 1 });
+  expect(second).toEqual({ ok: false, reason: "insufficient-units" });
+  store.close();
+});
+
+it("settleArrivals resolves combat against a defended destination on arrival — a unit that gets killed on the way never reaches it", () => {
   const { store, lobbyId, owner } = setup();
   const { playerId: defenderOwner } = store.resolvePlayer(undefined);
   // rng() = 1 guarantees every hit lands at max damage — a lone 10-health
   // defending robot absorbs one attacking drone's max hit (round(2*1.2)=2)
   // without dying, so the first attacker's outcome is "hit" and the second
-  // attacker (sent in the same order) still gets its own turn afterward.
+  // attacker (dispatched in the same order) still gets its own turn
+  // afterward, same per-unit-in-order rule as before ANU-038, just resolved
+  // on arrival instead of at dispatch.
   const units = createUnits(store.db, () => 1);
   units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "drone");
   units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "drone");
   units.placeUnit(lobbyId, defenderOwner, ADJACENT_SAL_CODE, "robot");
 
-  const result = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, ADJACENT_SAL_CODE, { drone: 2 });
-  expect(result.ok).toBe(true);
-  if (!result.ok) throw new Error("unreachable");
-  expect(result.outcomes).toHaveLength(2);
-  expect(result.outcomes.every((o) => o.outcome === "hit")).toBe(true);
+  const dispatch = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, ADJACENT_SAL_CODE, { drone: 2 });
+  if (!dispatch.ok) throw new Error("unreachable");
+  forceArrival(store, dispatch.dispatchedUnitIds);
+
+  const outcomes = units.settleArrivals(lobbyId);
+  expect(outcomes).toHaveLength(2);
+  expect(outcomes.every((o) => o.outcome === "hit")).toBe(true);
 
   // Neither attacker advanced into the still-defended suburb (a "hit"
-  // outcome leaves the attacker in place, same as single-unit attackSuburb).
+  // outcome leaves the attacker in place, same as single-unit attackSuburb)
+  // — and both are released from transit (no longer in-flight forever).
   const atDestination = units.getOccupancy(lobbyId).filter((u) => u.sal_code === ADJACENT_SAL_CODE && u.ownerPlayerId === owner);
   expect(atDestination).toHaveLength(0);
+  const stillInTransit = units.getOccupancy(lobbyId).filter((u) => u.ownerPlayerId === owner && u.destinationSalCode);
+  expect(stillInTransit).toHaveLength(0);
+  store.close();
+});
+
+it("two units racing for the same contested suburb from separate moveUnits orders resolve in actual-arrival order, each seeing the other's result", () => {
+  const { store, lobbyId, owner } = setup();
+  const { playerId: defenderOwner } = store.resolvePlayer(undefined);
+  // rng() = 1: a robot's max-roll hit (round(4*1.2)=5) exceeds a drone's 3
+  // health, guaranteeing a kill. The defending drone is placed directly at
+  // ADJACENT_SAL_CODE — undefended until either attacker arrives.
+  const units = createUnits(store.db, () => 1);
+  units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "robot");
+  units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "robot");
+  units.placeUnit(lobbyId, defenderOwner, ADJACENT_SAL_CODE, "drone");
+
+  // Two SEPARATE orders (not one bulk order), dispatched one after another —
+  // settleArrivals must still resolve them in actual arrival order
+  // (move_started_at) across both orders, not per-order.
+  const firstDispatch = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, ADJACENT_SAL_CODE, { robot: 1 });
+  const secondDispatch = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, ADJACENT_SAL_CODE, { robot: 1 });
+  if (!firstDispatch.ok || !secondDispatch.ok) throw new Error("unreachable");
+  forceArrival(store, [...firstDispatch.dispatchedUnitIds, ...secondDispatch.dispatchedUnitIds]);
+
+  const outcomes = units.settleArrivals(lobbyId);
+  expect(outcomes).toHaveLength(2);
+  // The first robot kills the undefended drone and advances; the second
+  // robot then arrives at an ALREADY-undefended suburb (the first robot is
+  // the same owner, not a defender) and simply moves in too — neither
+  // resolves against a stale "the drone is still there" snapshot taken at
+  // either one's own dispatch time.
+  expect(outcomes[0].outcome).toBe("kill");
+  expect(outcomes[1].outcome).toBe("moved");
+
+  const atDestination = units.getOccupancy(lobbyId).filter((u) => u.sal_code === ADJACENT_SAL_CODE);
+  expect(atDestination.filter((u) => u.ownerPlayerId === owner)).toHaveLength(2);
+  expect(atDestination.find((u) => u.ownerPlayerId === defenderOwner)).toBeUndefined();
   store.close();
 });

@@ -132,6 +132,28 @@ function broadcastOccupancy(lobbyId: string): void {
   for (const socket of socketsInLobby(lobbyId)) send(socket, message);
 }
 
+/**
+ * Resolves every unit in this lobby whose travel time has elapsed
+ * (server/units.ts's settleArrivals, ANU-038) against the destination's
+ * CURRENT occupants, then relays the same side effects a synchronous
+ * moveUnits outcome always has: an occupancy broadcast (units relocated/
+ * destroyed), economy to any attacker who just landed a kill, and a
+ * captures settle (an arrival can clear a defended suburb down to a single
+ * occupant, or change who's present at either end of a capture). Called
+ * before every occupancy-driven broadcast and from arrivalTicker below —
+ * never from an armed per-unit timer (ADR 0001), since settleArrivals
+ * itself only ever reads/writes the stored move_started_at timestamp.
+ */
+function settleArrivals(lobbyId: string): void {
+  const outcomes = units.settleArrivals(lobbyId);
+  if (outcomes.length === 0) return;
+  broadcastOccupancy(lobbyId);
+  for (const outcome of outcomes) {
+    if (outcome.outcome === "kill") sendEconomyToPlayer(lobbyId, outcome.attacker.ownerPlayerId);
+  }
+  broadcastCaptures(lobbyId);
+}
+
 function broadcastFactories(lobbyId: string): void {
   // getFactories settles any builds that finished since the last read, so
   // this also places the resulting unit (broadcastOccupancy below reflects
@@ -301,6 +323,20 @@ const captureTicker = setInterval(() => {
 }, 1000);
 captureTicker.unref();
 
+// Same reasoning as factoryTicker/captureTicker above, for ANU-038's
+// travel-time arrivals — a unit's travel time can elapse with nobody having
+// sent a message in the meantime (e.g. a long flight with the player
+// tabbed away), and settleArrivals needs a wake-up to resolve and broadcast
+// it within ~1s of actually finishing, same as a factory cycle or capture
+// completing.
+const arrivalTicker = setInterval(() => {
+  const liveLobbyIds = new Set([...sockets.values()].map((m) => m.lobbyId).filter((id): id is string => id !== null));
+  for (const lobbyId of liveLobbyIds) {
+    if (store.getLobby(lobbyId)?.started) settleArrivals(lobbyId);
+  }
+}, 1000);
+arrivalTicker.unref();
+
 wss.on("connection", (socket) => {
   alive.add(socket);
   socket.on("pong", () => alive.add(socket));
@@ -317,6 +353,11 @@ wss.on("connection", (socket) => {
     if (message.type === "hello") {
       const { playerId, token } = store.resolvePlayer(message.token);
       const lobbyId = store.getCurrentLobbyId(playerId); // null if they've never joined one
+      // ANU-038: settle any travel that finished while nobody was connected
+      // to trigger a tick, same stored-timestamp reasoning as settleCaptures
+      // below — BEFORE reading occupancy/ownership so a reconnecting client
+      // never sees a unit still shown as in-transit past its own arrival.
+      if (lobbyId) units.settleArrivals(lobbyId);
       // settleCaptures runs BEFORE buildLobbyState below so a transfer that
       // should have completed while nobody was connected to trigger one
       // (stored-timestamp rule — no armed timer kept it running) is already
@@ -415,6 +456,12 @@ wss.on("connection", (socket) => {
 
     if (message.type === "placeUnit") {
       if (!meta.lobbyId || !store.getLobby(meta.lobbyId)?.started) return; // occupancy only makes sense once a game is running
+      // ANU-038: settle any arrivals that finished since the last broadcast
+      // first, same "settle before every occupancy-driven action" precedent
+      // settleCaptures already follows — a reconnect-free action shouldn't
+      // see a unit still marked in-transit past its own arrival just
+      // because nobody triggered the ~1s ticker in the meantime.
+      settleArrivals(meta.lobbyId);
       const result = units.placeUnit(meta.lobbyId, meta.playerId, message.sal_code, message.unitTypeKey);
       if (!result.ok) {
         send(socket, { type: "error", message: `placeUnit: ${result.reason}` });
@@ -427,18 +474,20 @@ wss.on("connection", (socket) => {
 
     if (message.type === "moveUnits") {
       if (!meta.lobbyId || !store.getLobby(meta.lobbyId)?.started) return;
+      settleArrivals(meta.lobbyId); // same reasoning as placeUnit above
       const result = units.moveUnits(meta.lobbyId, meta.playerId, message.fromSalCode, message.toSalCode, message.counts);
       if (!result.ok) {
         send(socket, { type: "error", message: `moveUnits: ${result.reason}` });
         return;
       }
+      // A valid order only DISPATCHES — no combat is decided here, so
+      // there's no kill to credit scrap for yet (settleArrivals above/the
+      // arrivalTicker do that once travel time elapses). Still broadcast
+      // occupancy (the dispatched units now carry destinationSalCode, which
+      // is what drives the client's in-transit arrow) and captures (the
+      // dispatched units leaving fromSalCode can pause/reset a capture
+      // there, same as any other occupancy change).
       broadcastOccupancy(meta.lobbyId);
-      // A kill credits scrap (server/units.ts) — update the attacker's own
-      // sidebar economy readout (ANU-020); move/hit outcomes don't change it.
-      if (result.outcomes.some((o) => o.outcome === "kill")) sendEconomyToPlayer(meta.lobbyId, meta.playerId);
-      // A kill/advance can clear a defended suburb down to a single occupant
-      // (or an empty one), or units arriving/leaving can start, pause,
-      // resume or reset a capture at either end of the order.
       broadcastCaptures(meta.lobbyId);
       return;
     }

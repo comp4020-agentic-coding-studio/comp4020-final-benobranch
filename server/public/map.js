@@ -28,8 +28,14 @@
 // and #map-capture-progress (topmost): diagonal stripes (one <pattern> per rendered stripe layer, via
 // zoneVisual's pure output) and a progress bar under the suburb's icon, both per
 // suburb currently mid-capture — sparse, same full-redraw precedent.
+//
+// ANU-038 adds a fifth, renderTransit, into #map-transit (between #map-units
+// and #map-factories): a dotted origin-to-destination line, progress mark
+// and archetype icon per in-transit unit group, replacing the grounded
+// marker renderUnits no longer draws for a unit mid-travel.
 import { unitVisual } from "./unit-visual.js";
 import { layoutUnitMarkers } from "./unit-marker-layout.js";
+import { layoutTransitArrows } from "./transit-visual.js";
 import { factoryVisual } from "./factory-visual.js";
 import { DATA_CENTER_TIER_ICONS, DATA_CENTER_TIER_MARKER_SIZE } from "./data-center-visual.js";
 import { UNIT_ARCHETYPE_ICONS, UNIT_MARKER_SIZE } from "./unit-icon.js";
@@ -69,6 +75,7 @@ const dcLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.get
 const spawnLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-spawns")));
 const basesLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-bases")));
 const unitsLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-units")));
+const transitLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-transit")));
 const factoriesLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-factories")));
 const ownershipLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-ownership")));
 const captureProgressLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-capture-progress")));
@@ -492,6 +499,13 @@ const UNIT_COUNT_GAP = 40;
  * map.css) when layoutUnitMarkers reports the group's count just dropped.
  * Full redraw on every `occupancy` broadcast — same replaceChildren-then-
  * rebuild precedent as renderSpawns.
+ *
+ * ANU-038: an in-transit unit is excluded here — it no longer "occupies" its
+ * origin suburb once dispatched (same rule server/units.ts's
+ * selectOccupantsAt enforces server-side), and is drawn instead by
+ * renderTransit's dotted arrow, which is what actually represents it while
+ * it's between suburbs. Showing both a dimmed origin marker AND a travel
+ * arrow for the same unit would be redundant.
  * @param {OccupantUnit[]} units
  * @param {PlayerPresence[]} members
  */
@@ -499,17 +513,19 @@ export function renderUnits(units, members) {
   unitsLayer.replaceChildren();
   const colorByPlayerId = new Map(members.map((m) => [m.playerId, m.color]));
 
-  const resolved = units.map((unit) => {
-    const unitType = unitTypesByKey.get(unit.unitTypeKey);
-    const visual = unitVisual(unit, unitType?.health ?? unit.health);
-    return {
-      id: unit.id,
-      sal_code: unit.sal_code,
-      ownerPlayerId: unit.ownerPlayerId,
-      archetype: visual.icon,
-      inTransit: visual.state === "in-transit",
-    };
-  });
+  const resolved = units
+    .map((unit) => {
+      const unitType = unitTypesByKey.get(unit.unitTypeKey);
+      const visual = unitVisual(unit, unitType?.health ?? unit.health);
+      return {
+        id: unit.id,
+        sal_code: unit.sal_code,
+        ownerPlayerId: unit.ownerPlayerId,
+        archetype: visual.icon,
+        inTransit: visual.state === "in-transit",
+      };
+    })
+    .filter((unit) => !unit.inTransit);
   const { groups, nextCountByGroupKey } = layoutUnitMarkers(resolved, unitGroupCounts);
   unitGroupCounts = nextCountByGroupKey;
 
@@ -580,6 +596,117 @@ export function renderUnits(units, members) {
       group.appendChild(el);
     }
     unitsLayer.appendChild(group);
+  }
+}
+
+// Marker for a travelling group's progress-mark icon is drawn a little
+// smaller than a grounded unit marker (UNIT_MARKER_SIZE) — it's riding a
+// thin line between two suburbs, not sitting centered on one, so a
+// full-size icon would visually overwhelm the arrow it's meant to be a mark
+// on.
+const TRANSIT_MARKER_SIZE = UNIT_MARKER_SIZE * 0.7;
+
+/**
+ * Populates #map-transit with one dotted arrow per in-transit unit group
+ * (ANU-038 — grouped by (origin, destination, owner, archetype), via the
+ * already-tested unitVisual()/layoutTransitArrows()), replacing the
+ * grounded marker renderUnits no longer draws for these units while they're
+ * mid-travel. Each arrow is a dashed line from the origin's label_point to
+ * the destination's, a small owner-colored+archetype-iconed marker riding
+ * the line at the group's live progress fraction (the LEAST-advanced
+ * member's, so a trailing straggler is never drawn ahead of where it really
+ * is), and an "xN" count when more than one unit shares the exact trip.
+ * Full redraw on every `occupancy` broadcast — same replaceChildren-then-
+ * rebuild precedent as renderUnits/renderSpawns.
+ * @param {OccupantUnit[]} units
+ * @param {PlayerPresence[]} members
+ */
+export function renderTransit(units, members) {
+  transitLayer.replaceChildren();
+  const colorByPlayerId = new Map(members.map((m) => [m.playerId, m.color]));
+
+  /** @type {import("./transit-visual.js").ResolvedTransitUnit[]} */
+  const resolved = [];
+  for (const unit of units) {
+    const unitType = unitTypesByKey.get(unit.unitTypeKey);
+    const visual = unitVisual(unit, unitType?.health ?? unit.health);
+    if (visual.state !== "in-transit" || unit.destinationSalCode === undefined) continue;
+    resolved.push({
+      id: unit.id,
+      sal_code: unit.sal_code,
+      destinationSalCode: unit.destinationSalCode,
+      travelProgressFraction: unit.travelProgressFraction ?? 0,
+      ownerPlayerId: unit.ownerPlayerId,
+      archetype: visual.icon,
+    });
+  }
+
+  for (const transitGroup of layoutTransitArrows(resolved)) {
+    const originGeo = sal_codeToGeo.get(transitGroup.sal_code);
+    const destGeo = sal_codeToGeo.get(transitGroup.destinationSalCode);
+    if (!originGeo || !destGeo) continue;
+    const [ox, oy] = originGeo.label_point;
+    const [dx, dy] = destGeo.label_point;
+    const ownerColor = colorByPlayerId.get(transitGroup.ownerPlayerId) ?? "#888";
+
+    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    group.setAttribute("class", `transit-arrow transit-arrow--${transitGroup.archetype}`);
+
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("x1", String(ox));
+    line.setAttribute("y1", String(oy));
+    line.setAttribute("x2", String(dx));
+    line.setAttribute("y2", String(dy));
+    line.setAttribute("class", "transit-arrow__line");
+    line.setAttribute("style", `stroke: ${ownerColor};`);
+    group.appendChild(line);
+
+    // The progress mark's position along the origin-to-destination line —
+    // derived at render time from the group's (least-advanced-member's)
+    // travelProgressFraction, same "server sends a timestamp/fraction,
+    // client interpolates the drawable position" split capture progress
+    // bars already use.
+    const px = ox + (dx - ox) * transitGroup.travelProgressFraction;
+    const py = oy + (dy - oy) * transitGroup.travelProgressFraction;
+    const size = TRANSIT_MARKER_SIZE;
+
+    const backdrop = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    backdrop.setAttribute("x", String(px - size / 2));
+    backdrop.setAttribute("y", String(py - size / 2));
+    backdrop.setAttribute("width", String(size));
+    backdrop.setAttribute("height", String(size));
+    backdrop.setAttribute("class", "transit-arrow__backdrop");
+    backdrop.setAttribute("style", `fill: ${ownerColor};`);
+    group.appendChild(backdrop);
+
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "image");
+    icon.setAttribute("href", UNIT_ARCHETYPE_ICONS[transitGroup.archetype]);
+    icon.setAttribute("x", String(px - size / 2));
+    icon.setAttribute("y", String(py - size / 2));
+    icon.setAttribute("width", String(size));
+    icon.setAttribute("height", String(size));
+    icon.setAttribute("image-rendering", "pixelated");
+    icon.setAttribute("class", "transit-arrow__icon");
+    group.appendChild(icon);
+
+    if (transitGroup.count > 1) {
+      const count = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      count.setAttribute("x", String(px));
+      count.setAttribute("y", String(py + size / 2 + UNIT_COUNT_GAP));
+      count.setAttribute("text-anchor", "middle");
+      count.setAttribute("dominant-baseline", "hanging");
+      count.setAttribute("class", "transit-arrow__count");
+      count.textContent = `x${transitGroup.count}`;
+      group.appendChild(count);
+    }
+
+    // Same dataset-driven click-selection convention as renderUnits — a tap
+    // on an in-transit group's marker resolves to its sampleUnitId, same
+    // "one representative unit stands in for the group" rule.
+    for (const el of [backdrop, icon]) {
+      el.dataset.unitId = transitGroup.sampleUnitId;
+    }
+    transitLayer.appendChild(group);
   }
 }
 

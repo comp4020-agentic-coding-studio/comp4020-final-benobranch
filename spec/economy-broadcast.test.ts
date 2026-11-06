@@ -3,15 +3,19 @@
 // and the per-player economy broadcast (private — sent only to the acting
 // player, never to a bystander in the same lobby). Same connect/send/
 // waitFor helpers as spec/occupancy.test.ts/spec/combat.test.ts.
+//
+// ANU-038: the kill test below needs its own spawned, time-scaled server
+// (spec/lib/spawn-server.ts), not the shared unscaled spec/global-setup.ts
+// APP_URL server — moveUnits only dispatches now, and a kill isn't credited
+// until the attacking unit's travel time actually elapses (same reasoning
+// spec/combat.test.ts documents for its own dedicated server).
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, expect, inject, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
 import WebSocket from "ws";
 import { spawnServer, type SpawnedServer } from "./lib/spawn-server.ts";
 import { openStore } from "../server/store.ts";
-
-const baseUrl = inject("baseUrl");
 
 interface MapFixture {
   suburbs: { idx: number; sal_code: string; name: string }[];
@@ -43,9 +47,9 @@ interface Client {
   messages: ServerMessage[];
 }
 
-function connect(token?: string, url: string = baseUrl): Promise<Client> {
+function connect(baseUrl: string, token?: string): Promise<Client> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${url.replace(/^http/, "ws")}/ws`);
+    const ws = new WebSocket(`${baseUrl.replace(/^http/, "ws")}/ws`);
     const messages: ServerMessage[] = [];
     ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
     ws.on("error", reject);
@@ -84,13 +88,20 @@ async function closeAndWait(client: Client): Promise<void> {
 // (same pattern as spec/factories-restart.test.ts) to grant that ownership
 // via a direct store connection against the same DATA_DIR file, rather than
 // over the shared inject("baseUrl") server every other test in this file
-// uses.
+// used before ANU-038.
 const buildFactoryTestDataDir = mkdtempSync(join(tmpdir(), "anu022-economy-buildfactory-"));
 const buildFactoryTestPort = 8105;
 let buildFactoryTestServer: SpawnedServer | undefined;
+
+const killTestDataDir = mkdtempSync(join(tmpdir(), "anu038-economy-kill-"));
+const killTestPort = 8109; // 8108 is spec/combat.test.ts (ANU-038)
+let killTestServer: SpawnedServer | undefined;
+
 afterAll(async () => {
   await buildFactoryTestServer?.stop();
   rmSync(buildFactoryTestDataDir, { recursive: true, force: true });
+  await killTestServer?.stop();
+  rmSync(killTestDataDir, { recursive: true, force: true });
 });
 
 /**
@@ -99,11 +110,13 @@ afterAll(async () => {
  * order against a target with no OTHER player's unit present just moves the
  * attacker there ("undefended", issues/ANU-014.md's Resolution), so the
  * defending drone must belong to a second, separate player. Repeatedly
- * attacks a freshly-placed defender (scrap_value 2, owned by `defender`) at
- * `targetSalCode` until one lands as a kill, crediting the attacker's own
- * unit (placed at `spawnSalCode`) 2 scrap. Bounded well under the combat
- * rng's variance so this stays fast without needing an injectable rng over
- * the wire (spec/units.test.ts covers the rng itself directly, against
+ * dispatches a fresh attacker (robot) at a freshly-placed defender
+ * (scrap_value 2, owned by `defender`) at `targetSalCode`, waiting out each
+ * attempt's travel time (the caller's GAME_TIME_SCALE makes this short),
+ * until one lands as a kill, crediting the attacker's own unit (placed at
+ * `spawnSalCode`) 2 scrap. Bounded well under the combat rng's variance so
+ * this stays fast without needing an injectable rng over the wire
+ * (spec/units.test.ts covers the rng itself directly, against
  * server/units.ts).
  */
 async function earnScrapByKilling(
@@ -115,17 +128,17 @@ async function earnScrapByKilling(
 ): Promise<number> {
   for (let i = 0; i < 20; i++) {
     send(defender, { type: "placeUnit", sal_code: targetSalCode, unitTypeKey: "drone" });
-    await waitFor(defender, (m) => m.type === "occupancy", 300);
+    await waitFor(defender, (m) => m.type === "occupancy", 1000);
     send(attacker, { type: "moveUnits", fromSalCode: attackerSalCode, toSalCode: targetSalCode, counts: { robot: 1 } });
     try {
-      const economy = await waitFor(attacker, (m) => m.type === "economy", 300);
+      const economy = await waitFor(attacker, (m) => m.type === "economy", 1000);
       return economy.scrap as number;
     } catch {
       // Survived the hit — not yet a kill, no scrap credited. A "hit"
       // outcome leaves the attacker's sal_code unchanged (server/units.ts
       // only advances it on "moved"/"kill"), so it's still at spawnSalCode
-      // and the next iteration's placeUnit can retry against a fresh
-      // defender with no repositioning needed.
+      // and the next iteration's moveUnits can dispatch it again (it's no
+      // longer in transit once settleArrivals resolved the "hit").
     }
   }
   throw new Error("attacker never landed a kill after 20 attempts");
@@ -142,13 +155,19 @@ async function earnScrapByKilling(
 // (and update ANU-014's invariant) or revert to 6.
 
 it("a kill via moveUnits sends economy to the attacker only, not to a bystander in the same lobby", async () => {
+  // A high scale so a robot's design travel time (slower than a drone's,
+  // server/units.ts) over this fixture's distance resolves within a real
+  // second or two, matching earnScrapByKilling's per-attempt waitFor budget.
+  killTestServer = await spawnServer({ port: killTestPort, dataDir: killTestDataDir, gameTimeScale: 500 });
+  const baseUrl = killTestServer.baseUrl;
+
   const lobbyName = `economy-kill-${Date.now()}`;
-  const attacker = await connect();
+  const attacker = await connect(baseUrl);
   send(attacker, { type: "createLobby", name: lobbyName, capacity: 4, callsign: "attacker" });
   const created = await waitFor(attacker, (m) => m.type === "lobbyState" && (m.lobby as { name: string }).name === lobbyName);
   const lobbyId = (created.lobby as { lobbyId: string }).lobbyId;
 
-  const bystander = await connect();
+  const bystander = await connect(baseUrl);
   send(bystander, { type: "joinLobby", lobbyId, callsign: "bystander" });
   await waitFor(bystander, (m) => m.type === "lobbyState" && (m.lobby as { lobbyId: string }).lobbyId === lobbyId);
 
@@ -176,14 +195,14 @@ it("a kill via moveUnits sends economy to the attacker only, not to a bystander 
 
   await closeAndWait(attacker);
   await closeAndWait(bystander);
-});
+}, 20_000);
 
 it("buildFactory triggers an economy update to the acting player reflecting the scrap deduction (ANU-022: this is scrap's only remaining spend, since units auto-produce free)", async () => {
   const first = await spawnServer({ port: buildFactoryTestPort, dataDir: buildFactoryTestDataDir });
   buildFactoryTestServer = first;
 
   const lobbyName = `economy-build-${Date.now()}`;
-  const creator = await connect(undefined, first.baseUrl);
+  const creator = await connect(first.baseUrl);
   const welcome = creator.messages.find((m) => m.type === "welcome")!;
   const creatorToken = welcome.token as string;
   const creatorPlayerId = welcome.playerId as string;
@@ -220,7 +239,7 @@ it("buildFactory triggers an economy update to the acting player reflecting the 
 
   const reopened = await spawnServer({ port: buildFactoryTestPort, dataDir: buildFactoryTestDataDir });
   buildFactoryTestServer = reopened;
-  const resumedCreator = await connect(creatorToken, reopened.baseUrl);
+  const resumedCreator = await connect(reopened.baseUrl, creatorToken);
 
   resumedCreator.messages.length = 0;
   send(resumedCreator, { type: "buildFactory", sal_code: secondSalCode });

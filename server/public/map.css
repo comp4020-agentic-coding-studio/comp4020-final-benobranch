@@ -365,6 +365,63 @@
   cursor: pointer;
 }
 
+/* ANU-038: a unit group's travel line, drawn into #map-transit between
+   #map-units and #map-factories (index.html) — dashed/dotted so it reads as
+   "in motion," not a permanent road or border. pointer-events: none so taps
+   can't land on the thin line itself; only the progress-mark icon/backdrop
+   below are selectable, same reasoning .capture-stripe gives for its own
+   decorative overlay. */
+.transit-arrow__line {
+  fill: none;
+  stroke-width: 24;
+  stroke-dasharray: 48 36;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.8;
+  pointer-events: none;
+  animation: transit-line-march 1.2s linear infinite;
+}
+
+/* Marches the dash pattern along the line so an in-transit arrow reads as
+   actively moving, not just a static dashed line — the dash offset shifts
+   by exactly one dash+gap cycle (48 + 36) per iteration so the loop has no
+   visible seam. */
+@keyframes transit-line-march {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -84;
+  }
+}
+
+/* The progress-mark icon/backdrop riding the line (map.js computes its x/y
+   from the group's live travelProgressFraction) — same colored-square-
+   backdrop-plus-archetype-icon language as .unit-marker, just smaller
+   (TRANSIT_MARKER_SIZE) since it sits on a thin line rather than centered
+   on a suburb. */
+.transit-arrow__backdrop {
+  stroke: #05201c;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  cursor: pointer;
+}
+
+.transit-arrow__icon {
+  cursor: pointer;
+}
+
+/* "xN" readout for a travel group carrying more than one unit — same plain
+   white treatment as .unit-marker__count, just without the loss-flash
+   modifier (a unit lost mid-flight settles immediately into either an
+   arrival or a "hit" that releases it from transit; there's no multi-tick
+   "still travelling but now short a unit" state to flash). */
+.transit-arrow__count {
+  fill: #ffffff;
+  font-size: 140px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
 /* ANU-017: diagonal-stripe contest overlays (map.js's renderCapture), drawn
    into #map-ownership on top of ANU-020's plain ownership fill on the
    .suburb paths below. pointer-events: none so taps still resolve to the

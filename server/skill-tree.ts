@@ -14,6 +14,7 @@ import { createPerkHook, type PerkMultipliers } from "./perks.ts";
 import { elapsedMs, nowIso } from "./time.ts";
 import type { TflopsSource } from "./tflops.ts";
 import { SKILL_NODES, type SkillNodeDef } from "./public/skill-tree-nodes.js";
+import { DRONE_SPEED, ROBOT_SPEED } from "./units.ts";
 
 export { SKILL_NODES };
 export type { SkillNodeDef };
@@ -120,22 +121,26 @@ export interface SkillTree {
  * drone" doesn't just become a reskinned robot. The fourth seeded column
  * (`scrap_value`, ANU-022's rename of the old `build_cost_scrap`) no longer
  * gates building this type — it's what destroying one of it credits the
- * killer, scaled up from the base type to match its higher stats.
+ * killer, scaled up from the base type to match its higher stats. `speed`
+ * (ANU-038) follows the same "keep the base archetype's rule" precedent as
+ * movement_mode — an upgraded chassis, not a faster engine — rather than
+ * getting its own tuned value.
  */
 export function seedSkillGatedUnitTypes(db: DatabaseSync): void {
   const upsert = db.prepare(`
-    INSERT INTO unit_types (key, health, damage, scrap_value, build_time_ms, movement_mode, requires_skill_node)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO unit_types (key, health, damage, scrap_value, build_time_ms, movement_mode, speed, requires_skill_node)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET
       health = excluded.health,
       damage = excluded.damage,
       scrap_value = excluded.scrap_value,
       build_time_ms = excluded.build_time_ms,
       movement_mode = excluded.movement_mode,
+      speed = excluded.speed,
       requires_skill_node = excluded.requires_skill_node
   `);
-  upsert.run("drone-mk2", 5, 3, 3, 1500, "fly", "advanced-drone");
-  upsert.run("robot-mk2", 10, 7, 7, 3000, "ground", "advanced-robot");
+  upsert.run("drone-mk2", 5, 3, 3, 1500, "fly", DRONE_SPEED, "advanced-drone");
+  upsert.run("robot-mk2", 10, 7, 7, 3000, "ground", ROBOT_SPEED, "advanced-robot");
 }
 
 interface ResearchRow {
