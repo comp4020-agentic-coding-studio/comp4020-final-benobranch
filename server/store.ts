@@ -734,4 +734,25 @@ function migrate(db: DatabaseSync): void {
       throw err;
     }
   }
+
+  // v10 (ANU-038): units stop teleporting instantly — a constant,
+  // unit-type-dependant travel speed (map-units per ms) is what
+  // server/units.ts's new travel-time system divides real geometric
+  // distance by. `units.destination_sal_code`/`move_started_at` already
+  // existed (ANU-014, unused until now) so no `units` schema change is
+  // needed, only this new `unit_types` column. Plain ADD COLUMN, not the
+  // rebuild-via-new-table dance v5/v8 needed for `factories` — this is an
+  // addition, not a drop, so issues/ANU-023.md's DROP COLUMN quirk doesn't
+  // apply here.
+  if (version < 10) {
+    db.exec("BEGIN");
+    try {
+      db.exec("ALTER TABLE unit_types ADD COLUMN speed REAL NOT NULL DEFAULT 1");
+      db.exec("PRAGMA user_version = 10");
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+  }
 }

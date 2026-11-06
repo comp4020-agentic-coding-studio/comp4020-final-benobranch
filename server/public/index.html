@@ -114,6 +114,13 @@
             <g id="map-bases"></g>
             <!-- ANU-015's factory icon layer (ANU-020 renders into it via renderFactories) -->
             <g id="map-factories"></g>
+            <!-- ANU-038's travel-time arrows: a dotted line per in-transit unit group, from
+                 origin to destination, with a progress mark and archetype icon riding it —
+                 drawn BELOW #map-units so a unit still shows its grounded marker at the
+                 origin suburb only once it's actually arrived (renderUnits already excludes
+                 in-transit units from occupying a suburb; this layer is what represents them
+                 while they're between suburbs). -->
+            <g id="map-transit"></g>
             <!-- ANU-014's unit icon layer (drones/robots, in-transit state; ANU-020 renders into it via renderUnits) -->
             <g id="map-units"></g>
             <!-- ANU-017's capture progress bars — topmost, so no marker layer (a 900-wide mega data

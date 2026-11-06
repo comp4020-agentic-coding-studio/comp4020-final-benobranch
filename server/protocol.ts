@@ -178,18 +178,37 @@ export interface LobbyState {
 export interface OccupantUnit {
   id: string;
   ownerPlayerId: string;
+  /**
+   * Where this unit currently stands — while in transit (destinationSalCode
+   * set), this is still the ORIGIN it departed from, not an interpolated
+   * position; the client derives the visual position along the
+   * origin-to-destination line itself from moveStartedAt/the unit type's
+   * travel time (ANU-038), same "server sends a stored timestamp, client
+   * derives the animated value" split capture progress/factory cycles use.
+   */
   sal_code: string;
   unitTypeKey: string;
   health: number;
   /**
-   * Both present only while a drone is mid-flight over territory it
-   * doesn't own (ANU-014's "in transit" GUI state) — absent for an
-   * instant/completed move, which is every move as of this issue (no
-   * travel-time system exists yet; see server/units.ts). Robots never
-   * set these since their moves are adjacency-restricted, not flights.
+   * Present whenever this unit is mid-travel between two suburbs (ANU-038's
+   * travel-time system — originally reserved by ANU-014 for a drone-only
+   * "in transit" GUI state before travel time existed at all; now set for
+   * both drones and robots, since every move takes real time). Absent once
+   * the unit has arrived and its move has resolved (moved/hit/kill — see
+   * server/units.ts's settleArrivals) or if it has never moved.
    */
   destinationSalCode?: string;
   moveStartedAt?: string;
+  /**
+   * 0 (just dispatched) to 1 (about to arrive) — server-computed from
+   * elapsedMs(moveStartedAt) against this unit type's travel time (distance
+   * between sal_code and destinationSalCode, divided by its speed), same
+   * "server does the GAME_TIME_SCALE-aware math, client just reads a plain
+   * fraction" split FactoryProductionCycle.progressFraction/
+   * SuburbCaptureState.progressFraction already use. Present iff
+   * destinationSalCode is.
+   */
+  travelProgressFraction?: number;
 }
 
 export interface ServerOccupancy {
@@ -232,6 +251,16 @@ export interface UnitTypeCatalogEntry {
   scrapValue: number;
   buildTimeMs: number;
   movementMode: "fly" | "ground";
+  /**
+   * Constant travel speed (ANU-038): map/SVG units (map-geometry.json's
+   * label_point space) per game-ms. Travel time between two suburbs is
+   * their label_point distance divided by this — see server/units.ts's
+   * seedBaseUnitTypes for the chosen drone/robot values and why. The client
+   * needs this to compute an in-transit unit's live progress fraction
+   * itself (elapsedMs(moveStartedAt) / (distance / speed)), the same
+   * derived-at-render-time pattern factory/capture progress already use.
+   */
+  speed: number;
   /** Non-null for an ANU-016 skill-tree-gated variant — a factory only auto-produces it once its owner has unlocked that node (server/factories.ts). */
   requiresSkillNode: string | null;
 }

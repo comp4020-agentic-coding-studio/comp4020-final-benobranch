@@ -38,7 +38,7 @@
  * @property {string} sal_code
  * @property {string} ownerPlayerId
  * @property {"drone" | "robot"} archetype
- * @property {boolean} inTransit - true if any unit in the group is mid-flight (unit-visual.js's "in-transit" state) — only drones ever report this.
+ * @property {boolean} inTransit - true if any unit in the group is mid-travel (unit-visual.js's "in-transit" state) — both archetypes can report this since ANU-038 gave robots real travel time too.
  * @property {number} count
  * @property {string} sampleUnitId - one representative unit id from the group, for map click selection (a group no longer maps 1:1 to a single OccupantUnit).
  * @property {number} offsetIndex - this group's 0-based position among the groups sharing its suburb, in a stable (ownerPlayerId, then archetype) sort order — map.js fans markers out left-to-right by this.

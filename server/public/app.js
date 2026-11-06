@@ -18,7 +18,7 @@
 /** @typedef {import("../protocol.ts").FactoryState} FactoryState */
 /** @typedef {import("../protocol.ts").UnitTypeCatalogEntry} UnitTypeCatalogEntry */
 /** @typedef {import("../protocol.ts").SuburbCaptureState} SuburbCaptureState */
-import { mountMap, unmountMap, renderOwnership, renderBases, renderUnits, renderFactories, renderCapture, setUnitCatalog } from "./map.js";
+import { mountMap, unmountMap, renderOwnership, renderBases, renderUnits, renderTransit, renderFactories, renderCapture, setUnitCatalog } from "./map.js";
 import { mountSidebar, unmountSidebar, updateSidebarState, selectFromMap, showSidebarError } from "./sidebar.js";
 
 const TOKEN_KEY = "infrastructure-siege:token";
@@ -258,6 +258,7 @@ function renderLobbyScreen(/** @type {LobbyState} */ lobby) {
       renderOwnership(lobby.ownership, lobby.members);
       renderBases(lobby.ownership, lobby.members);
       renderUnits(occupancy, lobby.members);
+      renderTransit(occupancy, lobby.members);
       renderFactories(factories, lobby.members);
       renderCapture(captures, lobby.ownership, lobby.members);
     });
@@ -374,7 +375,10 @@ function handleMessage(/** @type {ServerMessage} */ msg) {
     if (parseHash().screen === "browse") renderLobbyList();
   } else if (msg.type === "occupancy") {
     occupancy = msg.units;
-    if (currentLobby?.started) renderUnits(occupancy, currentLobby.members);
+    if (currentLobby?.started) {
+      renderUnits(occupancy, currentLobby.members);
+      renderTransit(occupancy, currentLobby.members);
+    }
     updateSidebar();
   } else if (msg.type === "factories") {
     factories = msg.factories;

@@ -5,9 +5,19 @@
 // index.ts handler's broadcast/economy side effects, or a malformed payload
 // closing the connection. Same connect/send/waitFor pattern as
 // spec/skill-tree-protocol.test.ts.
-import { readFileSync } from "node:fs";
-import { expect, inject, it } from "vitest";
+//
+// ANU-038: dispatch-only tests (immediate rejection, malformed payload) can
+// still use the shared, unscaled spec/global-setup.ts APP_URL server —
+// nothing here waits for an arrival. The one test that needs a unit to
+// actually finish traveling (the kill test) spawns its own time-scaled
+// server, same pattern spec/combat.test.ts/spec/economy-broadcast.test.ts
+// document for the same reason.
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, expect, inject, it } from "vitest";
 import WebSocket from "ws";
+import { spawnServer, type SpawnedServer } from "./lib/spawn-server.ts";
 
 const baseUrl = inject("baseUrl");
 
@@ -41,9 +51,9 @@ interface Client {
   messages: ServerMessage[];
 }
 
-function connect(token?: string): Promise<Client> {
+function connect(url: string, token?: string): Promise<Client> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${baseUrl.replace(/^http/, "ws")}/ws`);
+    const ws = new WebSocket(`${url.replace(/^http/, "ws")}/ws`);
     const messages: ServerMessage[] = [];
     ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
     ws.on("error", reject);
@@ -75,8 +85,8 @@ async function closeAndWait(client: Client): Promise<void> {
   await new Promise((resolve) => client.ws.once("close", resolve));
 }
 
-async function createStartedLobby(name: string): Promise<Client> {
-  const creator = await connect();
+async function createStartedLobby(url: string, name: string): Promise<Client> {
+  const creator = await connect(url);
   send(creator, { type: "createLobby", name, capacity: 4, callsign: "mover" });
   const created = await waitFor(creator, (m) => m.type === "lobbyState" && (m.lobby as { name: string }).name === name);
   const lobbyId = (created.lobby as { lobbyId: string }).lobbyId;
@@ -85,8 +95,8 @@ async function createStartedLobby(name: string): Promise<Client> {
   return creator;
 }
 
-it("a valid moveUnits order broadcasts the resulting occupancy", async () => {
-  const creator = await createStartedLobby(`moveunits-occupancy-${Date.now()}`);
+it("a valid moveUnits order broadcasts occupancy showing the unit dispatched (in transit, still at its origin)", async () => {
+  const creator = await createStartedLobby(baseUrl, `moveunits-occupancy-${Date.now()}`);
   const spawnSalCode = nameToSalCode.get(mapData.spawn_table_by_lobby_size["4"].spawns[0])!;
   const targetSalCode = [...adjacency.get(spawnSalCode)!][0];
 
@@ -94,14 +104,18 @@ it("a valid moveUnits order broadcasts the resulting occupancy", async () => {
   await waitFor(creator, (m) => m.type === "occupancy" && (m.units as { sal_code: string }[]).some((u) => u.sal_code === spawnSalCode));
 
   send(creator, { type: "moveUnits", fromSalCode: spawnSalCode, toSalCode: targetSalCode, counts: { drone: 1 } });
-  const moved = await waitFor(creator, (m) => m.type === "occupancy" && (m.units as { sal_code: string }[]).some((u) => u.sal_code === targetSalCode));
-  expect((moved.units as { sal_code: string }[]).some((u) => u.sal_code === targetSalCode)).toBe(true);
+  const dispatched = await waitFor(creator, (m) => m.type === "occupancy" && (m.units as { destinationSalCode?: string }[]).some((u) => u.destinationSalCode === targetSalCode));
+  const unit = (dispatched.units as { sal_code: string; destinationSalCode?: string }[]).find((u) => u.destinationSalCode === targetSalCode)!;
+  // Dispatch alone never relocates it (ANU-038's confirmed "resolve on
+  // arrival" rule) — it's still at the ORIGIN, just now carrying a
+  // destination.
+  expect(unit.sal_code).toBe(spawnSalCode);
 
   await closeAndWait(creator);
 });
 
 it("a count exceeding what's present at fromSalCode is rejected with 'insufficient-units'", async () => {
-  const creator = await createStartedLobby(`moveunits-insufficient-${Date.now()}`);
+  const creator = await createStartedLobby(baseUrl, `moveunits-insufficient-${Date.now()}`);
   const spawnSalCode = nameToSalCode.get(mapData.spawn_table_by_lobby_size["4"].spawns[0])!;
   const targetSalCode = [...adjacency.get(spawnSalCode)!][0];
 
@@ -115,14 +129,28 @@ it("a count exceeding what's present at fromSalCode is rejected with 'insufficie
   await closeAndWait(creator);
 });
 
-it("a kill inside a moveUnits order sends economy to the attacker only, not to a bystander in the same lobby", async () => {
+const killTestDataDir = mkdtempSync(join(tmpdir(), "anu038-moveunits-kill-"));
+const killTestPort = 8110; // 8109 is spec/economy-broadcast.test.ts (ANU-038)
+let killTestServer: SpawnedServer | undefined;
+afterAll(async () => {
+  await killTestServer?.stop();
+  rmSync(killTestDataDir, { recursive: true, force: true });
+});
+
+it("a kill inside a moveUnits order sends economy to the attacker only, not to a bystander in the same lobby, once travel time elapses", async () => {
+  // A high scale so a robot's design travel time resolves within a real
+  // second or two over this fixture's distance — same reasoning
+  // spec/combat.test.ts/spec/economy-broadcast.test.ts document.
+  killTestServer = await spawnServer({ port: killTestPort, dataDir: killTestDataDir, gameTimeScale: 500 });
+  const url = killTestServer.baseUrl;
+
   const lobbyName = `moveunits-kill-${Date.now()}`;
-  const attacker = await connect();
+  const attacker = await connect(url);
   send(attacker, { type: "createLobby", name: lobbyName, capacity: 4, callsign: "attacker" });
   const created = await waitFor(attacker, (m) => m.type === "lobbyState" && (m.lobby as { name: string }).name === lobbyName);
   const lobbyId = (created.lobby as { lobbyId: string }).lobbyId;
 
-  const bystander = await connect();
+  const bystander = await connect(url);
   send(bystander, { type: "joinLobby", lobbyId, callsign: "bystander" });
   await waitFor(bystander, (m) => m.type === "lobbyState" && (m.lobby as { lobbyId: string }).lobbyId === lobbyId);
 
@@ -145,16 +173,16 @@ it("a kill inside a moveUnits order sends economy to the attacker only, not to a
   let scrap: number | undefined;
   for (let i = 0; i < 20 && scrap === undefined; i++) {
     send(bystander, { type: "placeUnit", sal_code: targetSalCode, unitTypeKey: "drone" });
-    await waitFor(bystander, (m) => m.type === "occupancy", 300);
+    await waitFor(bystander, (m) => m.type === "occupancy", 1000);
     send(attacker, { type: "moveUnits", fromSalCode: spawnSalCode, toSalCode: targetSalCode, counts: { robot: 1 } });
     try {
-      const economy = await waitFor(attacker, (m) => m.type === "economy", 300);
+      const economy = await waitFor(attacker, (m) => m.type === "economy", 1000);
       scrap = economy.scrap as number;
     } catch {
       // Survived the hit — not yet a kill. A "hit" outcome leaves the
-      // attacker at spawnSalCode (server/units.ts only advances it on
-      // "moved"/"kill"), so the next iteration's placeUnit can retry
-      // against a fresh defender with no repositioning needed.
+      // attacker's sal_code unchanged and releases it from transit
+      // (server/units.ts), so the next iteration's moveUnits can dispatch
+      // it again against a fresh defender with no repositioning needed.
     }
   }
   expect(scrap, "attacker should have landed a kill within 20 attempts").toBeDefined();
@@ -165,10 +193,10 @@ it("a kill inside a moveUnits order sends economy to the attacker only, not to a
 
   await closeAndWait(attacker);
   await closeAndWait(bystander);
-});
+}, 20_000);
 
 it("a closing-socket message with a malformed moveUnits payload is rejected at parse time, not silently ignored", async () => {
-  const creator = await connect();
+  const creator = await connect(baseUrl);
   const closed = new Promise<{ code: number; reason: string }>((resolve) => {
     creator.ws.once("close", (code, reason) => resolve({ code, reason: reason.toString() }));
   });
@@ -179,7 +207,7 @@ it("a closing-socket message with a malformed moveUnits payload is rejected at p
 });
 
 it("a moveUnits payload with a non-integer count is rejected at parse time", async () => {
-  const creator = await connect();
+  const creator = await connect(baseUrl);
   const closed = new Promise<{ code: number; reason: string }>((resolve) => {
     creator.ws.once("close", (code, reason) => resolve({ code, reason: reason.toString() }));
   });
