@@ -139,7 +139,7 @@ export function seedSkillGatedUnitTypes(db: DatabaseSync): void {
       speed = excluded.speed,
       requires_skill_node = excluded.requires_skill_node
   `);
-  upsert.run("drone-mk2", 5, 3, 3, 1500, "fly", DRONE_SPEED, "advanced-drone");
+  upsert.run("drone-mk2", 5, 3, 3, 60_000, "fly", DRONE_SPEED, "advanced-drone");
   upsert.run("robot-mk2", 10, 7, 7, 3000, "ground", ROBOT_SPEED, "advanced-robot");
 }
 
