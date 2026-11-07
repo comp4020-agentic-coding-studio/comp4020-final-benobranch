@@ -764,4 +764,45 @@ function migrate(db: DatabaseSync): void {
       throw err;
     }
   }
+
+  // v12 (ANU-048): an EMP blacks out a territory's factory production and
+  // data-center TFLOPS for a fixed duration (EMP_BLACKOUT_DURATION_MS,
+  // server/territory.ts) once it lands.
+  //
+  // `suburb_ownership.emp_started_at` (nullable, null when no blackout is
+  // active) is the stored-timestamp (ADR 0001) server/territory.ts's
+  // isEmpActive/getActiveEmpBlackouts compare against that fixed duration at
+  // read time — never a running timer. A second strike simply overwrites it
+  // to "now" (the confirmed refresh-not-stack re-strike rule), so no
+  // separate accumulator is needed for the blackout's OWN duration.
+  //
+  // `factory_production.cycle_frozen_at` (nullable, null whenever this
+  // cycle isn't currently frozen by a blackout) is new for a different
+  // reason: freezing a cycle's PROGRESS across a blackout window without
+  // losing it. `cycle_started_at` is NOT NULL (unlike suburb_ownership's own
+  // nullable `capture_started_at`), so this can't reuse capture's exact
+  // "started_at -> null signals paused" shape directly — instead,
+  // server/factories.ts's settleFactory stamps `cycle_frozen_at` to now the
+  // moment a blackout starts (and simply skips settling that cycle for as
+  // long as it stays set), then on the tick the blackout LIFTS, shifts
+  // `cycle_started_at` itself forward by exactly how long the cycle was
+  // frozen (elapsedMs(cycle_frozen_at)) and clears `cycle_frozen_at` — so
+  // every later elapsedMs(cycle_started_at) call transparently excludes the
+  // frozen window, the same end result capture's accumulated-ms/
+  // backdatedStart pause/resume gives, reached by shifting the start
+  // forward instead of storing a separate accumulator. Plain ADD COLUMN
+  // twice — additions, not drops, so issues/ANU-023.md's DROP COLUMN quirk
+  // doesn't apply.
+  if (version < 12) {
+    db.exec("BEGIN");
+    try {
+      db.exec("ALTER TABLE suburb_ownership ADD COLUMN emp_started_at TEXT");
+      db.exec("ALTER TABLE factory_production ADD COLUMN cycle_frozen_at TEXT");
+      db.exec("PRAGMA user_version = 12");
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+  }
 }

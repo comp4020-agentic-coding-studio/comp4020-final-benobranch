@@ -12,6 +12,11 @@
 // pattern as spec/units.test.ts / spec/perks.test.ts) rather than over the
 // WebSocket protocol, since there's no message to read a lobby member's
 // scrap balance back through.
+// Also checks ANU-048: a factory standing on a suburb under an active EMP
+// blackout doesn't advance or complete any production cycle, and a frozen
+// cycle resumes without losing or over-crediting progress once the
+// blackout lifts — see the "EMP blackout" describe block at the bottom of
+// this file.
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { openStore } from "../server/store.ts";
@@ -45,6 +50,17 @@ function rewindCycle(store: ReturnType<typeof openStore>, factoryId: string, uni
     .prepare("UPDATE factory_production SET cycle_started_at = ? WHERE factory_id = ? AND unit_type_key = ?")
     .run(pastIso, factoryId, unitTypeKey);
 }
+
+/** ANU-048: directly strikes a suburb with an EMP blackout, bypassing the units/moveUnits dispatch path — this file is testing settleFactory's freeze/resume reaction to a blackout, not how one gets started (spec/units.test.ts covers that). */
+function strikeWithEmp(store: ReturnType<typeof openStore>, lobbyId: string, salCode: string, startedMsAgo = 0): void {
+  const startedAt = new Date(Date.now() - startedMsAgo).toISOString();
+  store.db
+    .prepare(
+      "INSERT INTO suburb_ownership (lobby_id, sal_code, emp_started_at) VALUES (?, ?, ?) ON CONFLICT(lobby_id, sal_code) DO UPDATE SET emp_started_at = excluded.emp_started_at",
+    )
+    .run(lobbyId, salCode, startedAt);
+}
+
 
 it("each player has exactly one factory at their spawn suburb immediately after startLobby", () => {
   const { store, factories, lobbyId, owner } = setupSingle();
@@ -271,5 +287,76 @@ it("a skill-node-gated unit type doesn't auto-produce at a factory until the own
   const gatedCycle = afterUnlock.production.find((p) => p.unitTypeKey === "advanced-drone");
   expect(gatedCycle, "the gated type should start auto-producing the moment its node is unlocked, with no factories.ts code change needed").toBeDefined();
   expect(gatedCycle!.progressFraction).toBeLessThan(0.01);
+  store.close();
+});
+
+// --- ANU-048: EMP blackout freezes factory production, resumes without losing or over-crediting progress --- //
+
+it("a factory on a suburb under an active EMP blackout does not complete a cycle, even long past its normal build time", () => {
+  const { store, factories, units, lobbyId } = setupSingle();
+  const factory = factories.getFactories(lobbyId)[0]; // creates cycle rows
+
+  strikeWithEmp(store, lobbyId, factory.sal_code);
+  // Drone build_time_ms is 30,000 — rewind well past that; without the
+  // blackout check this would complete the cycle and place a unit.
+  rewindCycle(store, factory.id, "drone", 60_000);
+
+  factories.getFactories(lobbyId); // triggers settle()
+  expect(units.getOccupancy(lobbyId), "no unit should be placed while the suburb is blacked out").toHaveLength(0);
+  store.close();
+});
+
+it("a blacked-out cycle's displayed progress fraction stays pinned at the freeze instant, not climbing with real time", () => {
+  const { store, factories, lobbyId } = setupSingle();
+  const factory = factories.getFactories(lobbyId)[0];
+
+  // Rewind to a known partial progress (15,000ms of drone's 30,000ms = 50%), then strike.
+  rewindCycle(store, factory.id, "drone", 15_000);
+  factories.getFactories(lobbyId); // settle() freezes it NOW, banking ~50% progress
+  strikeWithEmp(store, lobbyId, factory.sal_code);
+  factories.getFactories(lobbyId); // settle() again — must not advance further
+
+  const stateAtFreeze = factories.getFactories(lobbyId).find((f) => f.id === factory.id)!;
+  const fractionAtFreeze = stateAtFreeze.production.find((p) => p.unitTypeKey === "drone")!.progressFraction;
+  expect(fractionAtFreeze).toBeGreaterThan(0.4);
+  expect(fractionAtFreeze).toBeLessThan(0.6);
+
+  // Simulate real time passing while still blacked out (no real sleep) by
+  // re-reading state again right away — the fraction must be the SAME, not
+  // higher, proving it's pinned to the freeze instant rather than still
+  // computed from live elapsed time against the (unmoving) cycle_started_at.
+  const stateStillFrozen = factories.getFactories(lobbyId).find((f) => f.id === factory.id)!;
+  const fractionStillFrozen = stateStillFrozen.production.find((p) => p.unitTypeKey === "drone")!.progressFraction;
+  expect(fractionStillFrozen).toBe(fractionAtFreeze);
+  store.close();
+});
+
+it("a frozen cycle resumes exactly where it left off once the blackout expires — it neither loses progress nor instantly completes", () => {
+  const { store, factories, units, lobbyId } = setupSingle();
+  const factory = factories.getFactories(lobbyId)[0];
+
+  // 50% through drone's 30,000ms build when the blackout hits.
+  rewindCycle(store, factory.id, "drone", 15_000);
+  strikeWithEmp(store, lobbyId, factory.sal_code);
+  factories.getFactories(lobbyId); // freezes at ~50%
+
+  // Let the blackout expire (backdate its own start past EMP_BLACKOUT_DURATION_MS) —
+  // isEmpActive now reads false, so settleFactory should resume the cycle.
+  store.db
+    .prepare("UPDATE suburb_ownership SET emp_started_at = ? WHERE lobby_id = ? AND sal_code = ?")
+    .run(new Date(Date.now() - 21 * 60_000).toISOString(), lobbyId, factory.sal_code);
+
+  const resumedState = factories.getFactories(lobbyId).find((f) => f.id === factory.id)!;
+  const resumedFraction = resumedState.production.find((p) => p.unitTypeKey === "drone")!.progressFraction;
+  // Resumed right where it left off (~50%), not reset to 0 and not jumped
+  // to/past 100% from the real time that elapsed while frozen.
+  expect(resumedFraction).toBeGreaterThan(0.4);
+  expect(resumedFraction).toBeLessThan(0.6);
+  expect(units.getOccupancy(lobbyId), "resuming must not itself complete the cycle").toHaveLength(0);
+
+  // Now push the RESUMED cycle the rest of the way and confirm it completes normally.
+  rewindCycle(store, factory.id, "drone", 35_000);
+  factories.getFactories(lobbyId);
+  expect(units.getOccupancy(lobbyId), "the resumed cycle should still be able to complete normally once its full duration has elapsed").toHaveLength(1);
   store.close();
 });

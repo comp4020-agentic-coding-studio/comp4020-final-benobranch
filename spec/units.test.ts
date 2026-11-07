@@ -7,11 +7,16 @@
 // pattern as spec/perks.test.ts) rather than over the WebSocket protocol,
 // since neither an injectable RNG nor a lobby member's scrap balance has a
 // message shape to read it back through.
+//
+// Also checks ANU-048's "emp" archetype: always detonates on arrival
+// (bypasses combat resolution entirely), is consumed, and writes/refreshes
+// a blackout on the destination suburb — see the "emp" describe block at
+// the bottom of this file.
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { openStore } from "../server/store.ts";
-import { createTerritory } from "../server/territory.ts";
-import { createUnits } from "../server/units.ts";
+import { createTerritory, EMP_BLACKOUT_DURATION_MS } from "../server/territory.ts";
+import { createUnits, EMP_UNIT_TYPE_KEY } from "../server/units.ts";
 
 interface MapFixture {
   suburbs: { idx: number; sal_code: string; name: string }[];
@@ -420,5 +425,128 @@ it("two units racing for the same contested suburb from separate moveUnits order
   const atDestination = units.getOccupancy(lobbyId).filter((u) => u.sal_code === ADJACENT_SAL_CODE);
   expect(atDestination.filter((u) => u.ownerPlayerId === owner)).toHaveLength(2);
   expect(atDestination.find((u) => u.ownerPlayerId === defenderOwner)).toBeUndefined();
+  store.close();
+});
+
+// --- ANU-048: "emp" always detonates on arrival, bypassing combat ---//
+
+it("an emp unit always detonates on arrival even against a defended destination — the defender is untouched, not fought", () => {
+  const { store, lobbyId, owner } = setup();
+  const { playerId: defenderOwner } = store.resolvePlayer(undefined);
+  // rng() = 1 would guarantee a kill for any ordinary attacker — proves the
+  // emp branch is checked BEFORE resolveCombatAt's combat logic, not just
+  // winning a fight it would have won anyway.
+  const units = createUnits(store.db, () => 1);
+  units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, EMP_UNIT_TYPE_KEY);
+  const defender = units.placeUnit(lobbyId, defenderOwner, ADJACENT_SAL_CODE, "robot");
+  if (!defender.ok) throw new Error("unreachable");
+
+  const dispatch = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, ADJACENT_SAL_CODE, { [EMP_UNIT_TYPE_KEY]: 1 });
+  expect(dispatch.ok).toBe(true);
+  if (!dispatch.ok) throw new Error("unreachable");
+  forceArrival(store, dispatch.dispatchedUnitIds);
+
+  const outcomes = units.settleArrivals(lobbyId);
+  expect(outcomes).toEqual([{ outcome: "emp-detonated", sal_code: ADJACENT_SAL_CODE }]);
+
+  // The emp unit itself is consumed (deleted, not relocated) ...
+  const empStillExists = units.getOccupancy(lobbyId).some((u) => u.unitTypeKey === EMP_UNIT_TYPE_KEY);
+  expect(empStillExists).toBe(false);
+  // ... and the defender is completely untouched — full health, still there.
+  const survivingDefender = units.getOccupancy(lobbyId).find((u) => u.id === defender.unit.id);
+  expect(survivingDefender?.health).toBe(defender.unit.health);
+  store.close();
+});
+
+it("an emp unit's arrival writes an active blackout on the destination suburb's suburb_ownership row", () => {
+  const { store, lobbyId, owner } = setup();
+  const units = createUnits(store.db);
+  units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, EMP_UNIT_TYPE_KEY);
+
+  const dispatch = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, NON_ADJACENT_SAL_CODE, { [EMP_UNIT_TYPE_KEY]: 1 });
+  if (!dispatch.ok) throw new Error("unreachable");
+  forceArrival(store, dispatch.dispatchedUnitIds);
+  units.settleArrivals(lobbyId);
+
+  const territory = createTerritory(store.db);
+  expect(territory.isEmpActive(lobbyId, NON_ADJACENT_SAL_CODE)).toBe(true);
+  expect(territory.getActiveEmpBlackouts(lobbyId)[NON_ADJACENT_SAL_CODE]).toBeTruthy();
+  store.close();
+});
+
+it("an emp can land on a suburb with no prior suburb_ownership row at all (neutral/unowned) — 'any territory' per the user's request", () => {
+  const { store, lobbyId, owner } = setup();
+  const units = createUnits(store.db);
+  units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, EMP_UNIT_TYPE_KEY);
+
+  const territory = createTerritory(store.db);
+  expect(territory.getOwnership(lobbyId)[NON_ADJACENT_SAL_CODE]).toBeUndefined(); // genuinely neutral before the strike
+
+  const dispatch = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, NON_ADJACENT_SAL_CODE, { [EMP_UNIT_TYPE_KEY]: 1 });
+  if (!dispatch.ok) throw new Error("unreachable");
+  forceArrival(store, dispatch.dispatchedUnitIds);
+  units.settleArrivals(lobbyId);
+
+  expect(territory.isEmpActive(lobbyId, NON_ADJACENT_SAL_CODE)).toBe(true);
+  // Still neutral — an EMP strike doesn't grant ownership.
+  expect(territory.getOwnership(lobbyId)[NON_ADJACENT_SAL_CODE]).toBeUndefined();
+  store.close();
+});
+
+it("a second emp landing on an already-blacked-out suburb refreshes the duration rather than stacking or being rejected", () => {
+  const { store, lobbyId, owner } = setup();
+  const units = createUnits(store.db);
+  const territory = createTerritory(store.db);
+
+  units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, EMP_UNIT_TYPE_KEY);
+  const first = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, NON_ADJACENT_SAL_CODE, { [EMP_UNIT_TYPE_KEY]: 1 });
+  if (!first.ok) throw new Error("unreachable");
+  forceArrival(store, first.dispatchedUnitIds);
+  units.settleArrivals(lobbyId);
+
+  // Backdate the existing strike to just-about-to-expire, so a refresh is
+  // unambiguously distinguishable from "it just never expired yet."
+  store.db
+    .prepare("UPDATE suburb_ownership SET emp_started_at = ? WHERE lobby_id = ? AND sal_code = ?")
+    .run(new Date(Date.now() - (EMP_BLACKOUT_DURATION_MS - 1000)).toISOString(), lobbyId, NON_ADJACENT_SAL_CODE);
+  expect(territory.isEmpActive(lobbyId, NON_ADJACENT_SAL_CODE)).toBe(true); // still active, 1s from expiry
+
+  units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, EMP_UNIT_TYPE_KEY);
+  const second = units.moveUnits(lobbyId, owner, SPAWN_SAL_CODE, NON_ADJACENT_SAL_CODE, { [EMP_UNIT_TYPE_KEY]: 1 });
+  if (!second.ok) throw new Error("unreachable");
+  forceArrival(store, second.dispatchedUnitIds);
+  units.settleArrivals(lobbyId);
+
+  // Refreshed to (near) the full duration again, not left at ~1s remaining.
+  const blackouts = territory.getActiveEmpBlackouts(lobbyId);
+  const expiresAt = Date.parse(blackouts[NON_ADJACENT_SAL_CODE]);
+  const remainingMs = expiresAt - Date.now();
+  expect(remainingMs).toBeGreaterThan(EMP_BLACKOUT_DURATION_MS - 5000);
+  store.close();
+});
+
+it("an idle (not-yet-dispatched) emp unit has health 1 and dies to a single ordinary attack, same as any other low-health unit", () => {
+  const { store, lobbyId, owner } = setup();
+  const { playerId: attackerOwner } = store.resolvePlayer(undefined);
+  const units = createUnits(store.db, () => 1); // guarantees the attacker's hit lands
+  const emp = units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, EMP_UNIT_TYPE_KEY);
+  if (!emp.ok) throw new Error("unreachable");
+  expect(emp.unit.health).toBe(1);
+
+  // An attacking drone at the emp's own suburb — a direct attackSuburb
+  // primitive hit, no travel involved, since this checks the IDLE emp's
+  // fragility, not the in-transit-is-safe guarantee (covered by the
+  // arrival tests above, which never give combat a chance to run at all).
+  // Drone, not robot: attackerOwner owns no territory, so a robot's
+  // groundCanReach would reject this as unreachable — a drone ignores
+  // adjacency/corridor entirely, which is all this test needs to exercise.
+  units.placeUnit(lobbyId, attackerOwner, SPAWN_SAL_CODE, "drone");
+  const attackerUnit = units.getOccupancy(lobbyId).find((u) => u.ownerPlayerId === attackerOwner)!;
+  const result = units.attackSuburb(lobbyId, attackerOwner, attackerUnit.id, SPAWN_SAL_CODE);
+  expect(result.ok).toBe(true);
+  if (result.ok) expect(result.outcome).toBe("kill");
+
+  const empStillExists = units.getOccupancy(lobbyId).some((u) => u.id === emp.unit.id);
+  expect(empStillExists).toBe(false);
   store.close();
 });

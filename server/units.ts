@@ -40,7 +40,16 @@ export type AttackOutcome =
   // Defender's health reached 0: it's destroyed, the attacker credits
   // scrap (scaled by the scrapPerKillMultiplier perk hook) and advances
   // into the now-vacated suburb.
-  | { outcome: "kill"; attacker: OccupantUnit; destroyedUnitId: string; scrapCredited: number };
+  | { outcome: "kill"; attacker: OccupantUnit; destroyedUnitId: string; scrapCredited: number }
+  // ANU-048: an "emp" unit's arrival ALWAYS detonates — bypasses
+  // resolveCombatAt entirely (never fights a defender, never dies on
+  // arrival), blacks out `sal_code`'s factory production/data-center TFLOPS
+  // for EMP_BLACKOUT_DURATION_MS (server/territory.ts), then is consumed
+  // (deleted). Distinct from "moved" — index.ts's settleArrivals relay
+  // (server/index.ts) needs to tell these apart to know to re-broadcast
+  // lobby state (the new empActiveUntil field lives there), which a plain
+  // "moved" outcome never requires.
+  | { outcome: "emp-detonated"; sal_code: string };
 
 export type AttackSuburbResult =
   | ({ ok: true } & AttackOutcome)
@@ -135,6 +144,40 @@ export interface Units {
 export const DRONE_SPEED = 0.5;
 export const ROBOT_SPEED = 0.2;
 
+/**
+ * The "emp" unit_types row's key — gated by the "emp-research" skill node
+ * (server/public/skill-tree-nodes.js), seeded idempotently alongside the
+ * base roster below rather than in server/skill-tree.ts's
+ * seedSkillGatedUnitTypes: an EMP isn't an upgraded variant of an existing
+ * archetype (it has no "mk2" base to pair with), so it doesn't belong in
+ * that drone-mk2/robot-mk2-specific seed function — it's its own archetype,
+ * just gated the same `requires_skill_node` way those are.
+ *
+ * Stats (confirmed with the user via AskUserQuestion — issues/ANU-048.md's
+ * Notes): health 1, damage 0 — "very fragile" while sitting idle at its
+ * home suburb (dies to any hit, including a 20%-under-rolled drone hit via
+ * resolveCombatAt's damage-variance roll) but never meaningfully fights
+ * back if attacked before it ships out. It cannot be destroyed IN TRANSIT
+ * at all — not because of its stats, but because settleArrivals' new
+ * "emp" branch below bypasses resolveCombatAt entirely for an arriving EMP,
+ * so health/damage only ever matter for an idle, not-yet-dispatched one.
+ * `movement_mode: "fly"` — launchable to any territory, same unrestricted
+ * reachability rule as a drone (the user's own "launchable to any
+ * territory" request), not road-adjacency-gated like a robot. `speed`:
+ * reuses DRONE_SPEED — no stated reason for an EMP to fly at a different
+ * pace than a drone. `scrap_value`: a small amount, consistent with the
+ * existing scrap-economy convention, credited to whoever kills an idle one.
+ * `build_time_ms`: EMP_BUILD_TIME_MS below — by far the longest build in
+ * the roster (next longest is robot's 2 minutes), so even a teched-up
+ * player can only produce one every few minutes per factory, matching
+ * "very hard to come by."
+ */
+export const EMP_UNIT_TYPE_KEY = "emp";
+export const EMP_BUILD_TIME_MS = 300_000;
+const EMP_HEALTH = 1;
+const EMP_DAMAGE = 0;
+const EMP_SCRAP_VALUE = 5;
+
 export function seedBaseUnitTypes(db: DatabaseSync): void {
   const upsert = db.prepare(`
     INSERT INTO unit_types (key, health, damage, scrap_value, build_time_ms, movement_mode, speed, requires_skill_node)
@@ -149,6 +192,24 @@ export function seedBaseUnitTypes(db: DatabaseSync): void {
   `);
   upsert.run("drone", 3, 2, 2, 30_000, "fly", DRONE_SPEED);
   upsert.run("robot", 10, 4, 4, 120_000, "ground", ROBOT_SPEED);
+
+  // Gated (requires_skill_node), so it needs the ON CONFLICT branch to also
+  // update that column — a plain re-run of this seed function must not
+  // silently un-gate an already-gated row (or vice versa) if this value
+  // ever changes.
+  const upsertGated = db.prepare(`
+    INSERT INTO unit_types (key, health, damage, scrap_value, build_time_ms, movement_mode, speed, requires_skill_node)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET
+      health = excluded.health,
+      damage = excluded.damage,
+      scrap_value = excluded.scrap_value,
+      build_time_ms = excluded.build_time_ms,
+      movement_mode = excluded.movement_mode,
+      speed = excluded.speed,
+      requires_skill_node = excluded.requires_skill_node
+  `);
+  upsertGated.run(EMP_UNIT_TYPE_KEY, EMP_HEALTH, EMP_DAMAGE, EMP_SCRAP_VALUE, EMP_BUILD_TIME_MS, "fly", DRONE_SPEED, "emp-research");
 }
 
 /**
@@ -256,6 +317,19 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
   const stayPut = db.prepare("UPDATE units SET destination_sal_code = NULL, move_started_at = NULL WHERE id = ?");
   const updateUnitHealth = db.prepare("UPDATE units SET health = ? WHERE id = ?");
   const deleteUnit = db.prepare("DELETE FROM units WHERE id = ?");
+  // ANU-048: writes/refreshes an EMP blackout on arrival — same upsert shape
+  // as server/territory.ts's own upsertEmpStrike (this module can't import
+  // that module's closure-private statement, and duplicating one `ON
+  // CONFLICT` upsert here is cheaper than threading a Territory dependency
+  // through createUnits' signature and every existing spec/*.test.ts call
+  // site that constructs one). Always overwrites emp_started_at to now,
+  // which is the confirmed refresh-not-stack re-strike rule — no separate
+  // "already active" branch needed.
+  const upsertEmpStrike = db.prepare(`
+    INSERT INTO suburb_ownership (lobby_id, sal_code, emp_started_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(lobby_id, sal_code) DO UPDATE SET emp_started_at = excluded.emp_started_at
+  `);
   const selectOccupancy = db.prepare(`
     SELECT id, owner_player_id AS ownerPlayerId, sal_code AS salCode, unit_type_key AS unitTypeKey, health,
            destination_sal_code AS destinationSalCode, move_started_at AS moveStartedAt
@@ -513,6 +587,19 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
         const distance = distanceBetweenSalCodes(unit.salCode, unit.destinationSalCode);
         const travelTimeMs = unitType.speed > 0 ? distance / unitType.speed : 0;
         if (elapsedMs(unit.moveStartedAt) < travelTimeMs) continue; // still travelling
+
+        // ANU-048: an "emp" unit's arrival ALWAYS detonates — checked before
+        // (never falls through to) the defended/undefended combat logic
+        // below. It never fights a defender present at the destination,
+        // never dies on arrival, and is consumed regardless of who or what
+        // is garrisoned there (confirmed with the user via AskUserQuestion
+        // — issues/ANU-048.md's Notes: a payload, not a combatant).
+        if (unit.unitTypeKey === EMP_UNIT_TYPE_KEY) {
+          deleteUnit.run(unit.id);
+          upsertEmpStrike.run(lobbyId, unit.destinationSalCode, nowIso());
+          outcomes.push({ outcome: "emp-detonated", sal_code: unit.destinationSalCode });
+          continue;
+        }
 
         // Resolves against the destination's ACTUAL occupants right now,
         // not whatever was there when this unit was dispatched — a

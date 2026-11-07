@@ -240,6 +240,33 @@ it("leaving a suburb with no contester present pauses (not resets) progress", ()
   store.close();
 });
 
+// --- ANU-048: an EMP blackout is an economic effect only — it must not touch capture --- //
+
+it("an active EMP blackout at a suburb does not pause or otherwise affect a capture in progress there", () => {
+  const { store, territory, units, lobbyId, owner } = setup();
+  units.placeUnit(lobbyId, owner, NEUTRAL_SAL_CODE, "drone");
+  territory.settleCaptures(lobbyId); // starts the capture
+
+  territory.empStrike(lobbyId, NEUTRAL_SAL_CODE);
+  expect(territory.isEmpActive(lobbyId, NEUTRAL_SAL_CODE)).toBe(true);
+
+  backdateCapture(store, lobbyId, NEUTRAL_SAL_CODE, CAPTURE_DURATION_MS * 0.5);
+  const halfway = territory.settleCaptures(lobbyId);
+  // Capture keeps accruing exactly as if no blackout were active at all —
+  // confirmed with the user via AskUserQuestion (issues/ANU-048.md's Notes):
+  // the blackout is an economic effect (factories/TFLOPS) only.
+  expect(halfway.captures[0].progressFraction).toBeGreaterThan(0.4);
+  expect(halfway.captures[0].progressFraction).toBeLessThan(0.6);
+
+  backdateCapture(store, lobbyId, NEUTRAL_SAL_CODE, CAPTURE_DURATION_MS * 1.1);
+  const completed = territory.settleCaptures(lobbyId);
+  expect(completed.transfers).toEqual([{ salCode: NEUTRAL_SAL_CODE, newOwnerPlayerId: owner }]);
+  // The blackout itself is untouched by the capture completing — ownership
+  // and the EMP state are independent columns on the same row.
+  expect(territory.isEmpActive(lobbyId, NEUTRAL_SAL_CODE)).toBe(true);
+  store.close();
+});
+
 // --- real process restart mid-capture, same style as spec/territory.test.ts / spec/factories-restart.test.ts --- //
 
 interface ServerMessage {
