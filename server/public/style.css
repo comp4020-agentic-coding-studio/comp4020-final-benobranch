@@ -423,6 +423,16 @@ button:not(:disabled):hover {
   font-weight: 600;
 }
 
+/* ANU-046: visually flagged as a dev affordance, not a real game action. */
+.sidebar-economy__debug {
+  margin-left: auto;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px dashed var(--text-dim);
+}
+
 .suburb-detail {
   display: flex;
   flex-direction: column;
