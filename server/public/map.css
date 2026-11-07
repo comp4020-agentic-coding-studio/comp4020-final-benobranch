@@ -241,10 +241,13 @@
 }
 
 /* ANU-021: matches the map's own icon markers rather than a flat color
-   swatch, so the legend still reads as "the same mark, shrunk down". */
+   swatch, so the legend still reads as "the same mark, shrunk down".
+   ANU-049 extends this to the factory icon (no per-tier variants, same
+   "one shape for every factory" rule factory-visual.js documents). */
 .legend-dot--mega,
 .legend-dot--major,
-.legend-dot--standard {
+.legend-dot--standard,
+.legend-dot--factory {
   border-radius: 0;
   background-size: contain;
   background-repeat: no-repeat;
@@ -261,6 +264,10 @@
 
 .legend-dot--standard {
   background-image: url("icons/data-center-standard.png");
+}
+
+.legend-dot--factory {
+  background-image: url("icons/factory.png");
 }
 
 .map-attribution {
@@ -349,6 +356,13 @@
   stroke: #05201c;
   stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
+  cursor: pointer;
+}
+
+/* ANU-049: the icon layered on top of .factory-marker's backdrop — same
+   cursor as the backdrop since elementFromPoint resolves taps to whichever
+   of the two is actually topmost (the icon, painted last). */
+.factory-marker__icon {
   cursor: pointer;
 }
 
