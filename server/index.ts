@@ -139,17 +139,25 @@ function broadcastOccupancy(lobbyId: string): void {
 /**
  * Resolves every unit in this lobby whose travel time has elapsed
  * (server/units.ts's settleArrivals, ANU-038) against the destination's
- * CURRENT occupants, then relays the same side effects a synchronous
- * moveUnits outcome always has: an occupancy broadcast (units relocated/
- * destroyed), economy to any attacker who just landed a kill, and a
- * captures settle (an arrival can clear a defended suburb down to a single
- * occupant, or change who's present at either end of a capture). Called
- * before every occupancy-driven broadcast and from arrivalTicker below —
- * never from an armed per-unit timer (ADR 0001), since settleArrivals
- * itself only ever reads/writes the stored move_started_at timestamp.
+ * CURRENT occupants, THEN (ANU-044) resolves one ongoing exchange of hits
+ * between any enemy garrisons simply standing in the same suburb already —
+ * units.ts's settleGarrisonCombat, the fix for "two enemy teams garrisoned
+ * in the same zone never fight each other": an arrival-only combat trigger
+ * left stationary multi-owner garrisons to just sit there, with only
+ * territory.ts's capture-contest freeze ever reacting to their mutual
+ * presence (freezing progress, never resolving the units against each
+ * other) — see issues/ANU-044.md's Resolution for the full root cause.
+ * Relays the same side effects a synchronous moveUnits outcome always has:
+ * an occupancy broadcast (units relocated/destroyed), economy to any
+ * attacker who just landed a kill, and a captures settle (an arrival or a
+ * garrison kill can clear a defended suburb down to a single occupant, or
+ * change who's present at either end of a capture). Called before every
+ * occupancy-driven broadcast and from arrivalTicker below — never from an
+ * armed per-unit timer (ADR 0001), since both settle functions only ever
+ * read/write stored timestamps and current occupancy.
  */
 function settleArrivals(lobbyId: string): void {
-  const outcomes = units.settleArrivals(lobbyId);
+  const outcomes = [...units.settleArrivals(lobbyId), ...units.settleGarrisonCombat(lobbyId)];
   if (outcomes.length === 0) return;
   broadcastOccupancy(lobbyId);
   for (const outcome of outcomes) {
@@ -388,7 +396,15 @@ wss.on("connection", (socket) => {
       // to trigger a tick, same stored-timestamp reasoning as settleCaptures
       // below — BEFORE reading occupancy/ownership so a reconnecting client
       // never sees a unit still shown as in-transit past its own arrival.
-      if (lobbyId) units.settleArrivals(lobbyId);
+      // ANU-044: also settle any garrison-vs-garrison combat that should
+      // have happened while nobody was connected to trigger a tick — same
+      // "no armed timer, just a stored-state settle" reasoning, so a
+      // reconnecting client doesn't see two enemy garrisons frozen in a
+      // stand-off that should already have traded hits.
+      if (lobbyId) {
+        units.settleArrivals(lobbyId);
+        units.settleGarrisonCombat(lobbyId);
+      }
       // settleCaptures runs BEFORE buildLobbyState below so a transfer that
       // should have completed while nobody was connected to trigger one
       // (stored-timestamp rule — no armed timer kept it running) is already

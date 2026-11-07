@@ -478,3 +478,109 @@ it("two units racing for the same contested suburb from separate moveUnits order
   expect(atDestination.find((u) => u.ownerPlayerId === defenderOwner)).toBeUndefined();
   store.close();
 });
+
+// ANU-044: "two enemy teams garrisoned in the same zone never fight each
+// other — capture just alternates between them instead." Root cause: combat
+// only ever resolved at the INSTANT a unit's travel time elapsed
+// (settleArrivals above) or via the dead single-unit attackSuburb primitive
+// — once two enemy garrisons were both already resolved/stationary in the
+// same suburb (sal_code equal, destination_sal_code null, nobody
+// "arriving"), nothing ever pitted them against each other again. Meanwhile
+// territory.ts's settleSuburb (ANU-017) correctly freezes CAPTURE PROGRESS
+// while 2+ distinct non-owner occupants are present, but was never the
+// thing responsible for resolving unit-vs-unit combat — so the two systems
+// combined produced a frozen capture bar sitting over a garrison stand-off
+// that never actually fought, which (once one side eventually left to
+// regroup rather than stand there forever) read to the user as capture
+// alternating uncontested between the two sides. settleGarrisonCombat below
+// is the missing periodic combat pass between stationary garrisons.
+it("settleGarrisonCombat: two players' stationary garrisons in the same suburb actually trade hits, round after round, until one side is wiped out", () => {
+  const { store, lobbyId, owner: lobbyOwner } = setup();
+  const { playerId: p1 } = store.resolvePlayer(undefined);
+  const { playerId: p2 } = store.resolvePlayer(undefined);
+  // rng() = 0.5 -> damage = round(4 * (0.8 + 0.5*0.4)) = round(4) = 4 for a robot (damage 4).
+  const units = createUnits(store.db, () => 0.5);
+  units.placeUnit(lobbyId, p1, NON_ADJACENT_SAL_CODE, "robot"); // health 10
+  units.placeUnit(lobbyId, p2, NON_ADJACENT_SAL_CODE, "robot"); // health 10
+
+  // Nothing is "arriving" here — both units were placed directly, already
+  // stationary — so settleArrivals (the old, only combat trigger) has
+  // nothing to do.
+  expect(units.settleArrivals(lobbyId)).toHaveLength(0);
+
+  let kills = 0;
+  let rounds = 0;
+  for (let i = 0; i < 10; i++) {
+    const outcomes = units.settleGarrisonCombat(lobbyId);
+    if (outcomes.length === 0) break;
+    rounds++;
+    kills += outcomes.filter((o) => o.outcome === "kill").length;
+    const remaining = units.getOccupancy(lobbyId).filter((u) => u.sal_code === NON_ADJACENT_SAL_CODE);
+    if (new Set(remaining.map((u) => u.ownerPlayerId)).size < 2) break;
+  }
+
+  expect(rounds).toBeGreaterThan(1); // actually traded hits across multiple ticks, not resolved in one call
+  expect(kills).toBe(1); // exactly one garrison wiped out -- the other survives as the sole occupant
+
+  const remaining = units.getOccupancy(lobbyId).filter((u) => u.sal_code === NON_ADJACENT_SAL_CODE);
+  const survivors = new Set(remaining.map((u) => u.ownerPlayerId));
+  expect(survivors.size).toBe(1); // exactly one owner left standing, not an unresolved stand-off
+  store.close();
+});
+
+it("settleGarrisonCombat: a single owner present is a no-op (uncontested accrual is territory.ts's job, not combat's)", () => {
+  const { store, lobbyId, owner } = setup();
+  const units = createUnits(store.db);
+  units.placeUnit(lobbyId, owner, NON_ADJACENT_SAL_CODE, "drone");
+  units.placeUnit(lobbyId, owner, NON_ADJACENT_SAL_CODE, "drone"); // same owner, two units -- still only one distinct owner present
+
+  const outcomes = units.settleGarrisonCombat(lobbyId);
+  expect(outcomes).toHaveLength(0);
+  store.close();
+});
+
+it("settleGarrisonCombat: a suburb's own owner fights back against a lone invader standing in their territory (not left passive while capture ticks up)", () => {
+  const { store, lobbyId, owner: lobbyOwner } = setup();
+  const { playerId: defender } = store.resolvePlayer(undefined);
+  const { playerId: invader } = store.resolvePlayer(undefined);
+  const units = createUnits(store.db, () => 0.5);
+  const territory = createTerritory(store.db);
+  // Give `defender` registered ownership of NON_ADJACENT_SAL_CODE directly
+  // (territory.ts's "capturers" filter excludes the registered owner, but
+  // settleGarrisonCombat reasons from physical presence, not ownership).
+  store.db
+    .prepare("INSERT INTO suburb_ownership (lobby_id, sal_code, owner_player_id) VALUES (?, ?, ?)")
+    .run(lobbyId, NON_ADJACENT_SAL_CODE, defender);
+
+  units.placeUnit(lobbyId, defender, NON_ADJACENT_SAL_CODE, "robot");
+  units.placeUnit(lobbyId, invader, NON_ADJACENT_SAL_CODE, "drone");
+
+  const outcomes = units.settleGarrisonCombat(lobbyId);
+  expect(outcomes.length).toBeGreaterThan(0);
+  // The defender's own unit must be party to at least one of these outcomes
+  // (either as the attacker, or -- if invader struck first in this round --
+  // the defending robot's health reflects having taken a hit) rather than
+  // sitting out its own invasion entirely.
+  const defenderInvolved = outcomes.some(
+    (o) =>
+      (o.outcome === "hit" && (o.attacker.ownerPlayerId === defender || o.defender.ownerPlayerId === defender)) ||
+      (o.outcome === "kill" && o.attacker.ownerPlayerId === defender),
+  );
+  expect(defenderInvolved).toBe(true);
+  store.close();
+});
+
+it("settleGarrisonCombat: N=3 distinct owners present resolves without error and produces hits each round", () => {
+  const { store, lobbyId } = setup();
+  const { playerId: p1 } = store.resolvePlayer(undefined);
+  const { playerId: p2 } = store.resolvePlayer(undefined);
+  const { playerId: p3 } = store.resolvePlayer(undefined);
+  const units = createUnits(store.db, () => 0.5);
+  units.placeUnit(lobbyId, p1, NON_ADJACENT_SAL_CODE, "robot");
+  units.placeUnit(lobbyId, p2, NON_ADJACENT_SAL_CODE, "robot");
+  units.placeUnit(lobbyId, p3, NON_ADJACENT_SAL_CODE, "robot");
+
+  const outcomes = units.settleGarrisonCombat(lobbyId);
+  expect(outcomes.length).toBeGreaterThan(0);
+  store.close();
+});

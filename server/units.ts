@@ -100,6 +100,42 @@ export interface Units {
    * resolved just before it (issues/ANU-038.md's Notes).
    */
   settleArrivals(lobbyId: string): AttackOutcome[];
+  /**
+   * ANU-044: resolves ongoing combat between enemy garrisons that are
+   * simply standing in the same suburb already — not freshly arriving.
+   * Before this, `resolveCombatAt` only ever ran once, at the instant a
+   * unit's travel time elapsed (`settleArrivals` above) or via the dead
+   * `attackSuburb` primitive; two enemy garrisons that both resolved their
+   * arrivals and were then simply co-located (no one "arriving" anymore)
+   * never fought again, no matter how long they stood there — the bug
+   * report's "they never fight each other" is this literally, not a
+   * figure of speech. territory.ts's `settleSuburb` (ANU-017) correctly
+   * freezes CAPTURE PROGRESS while 2+ distinct owners are present
+   * (contested), but was never meant to resolve unit-vs-unit combat
+   * itself — that responsibility stayed here, in units.ts, and this is
+   * the missing piece.
+   *
+   * One exchange per suburb per call: for every suburb where 2+ distinct
+   * owners currently have stationary (non-transit) units, the
+   * longest-present occupant overall (spawned_at-then-id order, same
+   * tie-break `selectOccupantsAt`/`selectOwnedUnitsOfTypeAt` already use)
+   * fights via the existing single-defender `resolveCombatAt` (attacking
+   * whichever ENEMY occupant has been there longest) — not an all-out
+   * melee, so a stand-off plays out as a continuing trade of hits across
+   * ticks rather than instantly wiping a garrison in one pass, matching
+   * how `settleArrivals`/`attackSuburb` already resolve one hit at a time.
+   * This also naturally covers "an owner's defending garrison vs. a single
+   * invader standing in their territory" (two distinct owners physically
+   * present, even though territory.ts only counts the invader as a
+   * "capturer" since the owner's own units are never a capturer/contester
+   * of their own zone) — the defenders should not sit idle while a
+   * capture ticks up against them, and now they don't.
+   *
+   * Called at the same cadence/call-sites as `settleArrivals` — before
+   * every occupancy-driven broadcast and from the ~1s `arrivalTicker` (see
+   * server/index.ts) — never an armed per-suburb timer (ADR 0001).
+   */
+  settleGarrisonCombat(lobbyId: string): AttackOutcome[];
   getOccupancy(lobbyId: string): OccupantUnit[];
 }
 
@@ -335,6 +371,24 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
     SELECT id, owner_player_id AS ownerPlayerId, sal_code AS salCode, unit_type_key AS unitTypeKey, health, spawned_at AS spawnedAt
     FROM units WHERE lobby_id = ? AND sal_code = ? AND destination_sal_code IS NULL
     ORDER BY spawned_at, id
+  `);
+  // ANU-044: lobby-wide stationary (non-transit) occupancy, grouped by
+  // sal_code purely to find which suburbs currently have 2+ DISTINCT
+  // owners physically present at once — the condition under which
+  // settleGarrisonCombat below needs to act — and, via MIN(spawned_at),
+  // which owner has been there longest (deterministic turn order, same
+  // shape as territory.ts's selectOccupancyGroups). Deliberately NOT
+  // filtered against suburb_ownership the way territory.ts's "capturers"
+  // are (it excludes only the suburb's registered owner) — this is about
+  // physical presence of enemy units full stop, which is also what makes
+  // an owner's own defending garrison fight back against a lone invader
+  // (two distinct owners physically present, even though territory.ts
+  // never counts the defending owner as a "capturer" of their own zone).
+  const selectStationaryOccupancyGroups = db.prepare(`
+    SELECT sal_code AS salCode, owner_player_id AS ownerPlayerId, MIN(spawned_at) AS earliestSpawnedAt
+    FROM units WHERE lobby_id = ? AND destination_sal_code IS NULL
+    GROUP BY sal_code, owner_player_id
+    ORDER BY sal_code, earliestSpawnedAt, owner_player_id
   `);
   const selectOwnedSalCodes = db.prepare(
     "SELECT sal_code AS salCode FROM suburb_ownership WHERE lobby_id = ? AND owner_player_id = ?",
@@ -600,6 +654,43 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
         // was already checked once at dispatch time and must not be
         // re-checked here (see resolveCombatAt's docstring).
         outcomes.push(resolveCombatAt(lobbyId, unit.ownerPlayerId, unit, unit.destinationSalCode));
+      }
+      return outcomes;
+    },
+
+    settleGarrisonCombat(lobbyId) {
+      const groups = selectStationaryOccupancyGroups.all(lobbyId) as unknown as {
+        salCode: string;
+        ownerPlayerId: string;
+        earliestSpawnedAt: string;
+      }[];
+      const ownersBySalCode = new Map<string, string[]>();
+      for (const g of groups) {
+        if (!ownersBySalCode.has(g.salCode)) ownersBySalCode.set(g.salCode, []);
+        ownersBySalCode.get(g.salCode)!.push(g.ownerPlayerId);
+      }
+
+      const outcomes: AttackOutcome[] = [];
+      for (const [salCode, owners] of ownersBySalCode) {
+        if (owners.length < 2) continue; // only one owner present here -- nothing to fight; territory.ts's uncontested accrual covers this case
+        // One exchange per owner CURRENTLY present this tick, in the
+        // deterministic longest-present-first order the query above already
+        // returns -- a "round" where everyone standing in the suburb gets
+        // one attack against the longest-present enemy (resolveCombatAt's
+        // own defender choice), not just whichever owner got here first
+        // historically. Live occupancy is re-read before every owner's
+        // turn (not just once at the top) since an earlier attack THIS SAME
+        // round can kill a defender down to the last owner standing (break)
+        // or remove an owner's only representative unit (continue) before
+        // their turn comes up.
+        for (const ownerPlayerId of owners) {
+          const liveOccupants = selectOccupantsAt.all(lobbyId, salCode) as unknown as OccupantRow[];
+          const distinctOwnersNow = new Set(liveOccupants.map((o) => o.ownerPlayerId));
+          if (distinctOwnersNow.size < 2) break; // the contest already resolved mid-round -- nobody left to fight
+          const attackerUnit = liveOccupants.find((o) => o.ownerPlayerId === ownerPlayerId);
+          if (!attackerUnit) continue; // this owner's representative was destroyed earlier this round
+          outcomes.push(resolveCombatAt(lobbyId, ownerPlayerId, attackerUnit, salCode));
+        }
       }
       return outcomes;
     },
