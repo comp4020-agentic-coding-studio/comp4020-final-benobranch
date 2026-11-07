@@ -145,6 +145,23 @@ export interface ClientStartResearch {
   nodeId: string;
 }
 
+/** ANU-042: every valid value of AutoFortifyMode — the single source parseClientMessage validates against. */
+export const AUTO_FORTIFY_MODES = ["off", "balance", "border"] as const;
+export type AutoFortifyMode = (typeof AUTO_FORTIFY_MODES)[number];
+
+export interface ClientSetAutoFortifyMode {
+  /**
+   * Sets the sender's auto-fortify preference for their current lobby
+   * (ANU-042): "off" (default — no automatic redistribution), "balance"
+   * (even out garrison counts across every owned territory) or "border"
+   * (weight surplus toward territories bordering an enemy or unclaimed
+   * suburb, over interior ones). Takes effect on the next ~1s auto-fortify
+   * sweep (server/index.ts); doesn't affect units already in transit.
+   */
+  type: "setAutoFortifyMode";
+  mode: AutoFortifyMode;
+}
+
 export type ClientMessage =
   | ClientHello
   | ClientCreateLobby
@@ -156,7 +173,8 @@ export type ClientMessage =
   | ClientMoveUnits
   | ClientBuildFactory
   | ClientStartResearch
-  | ClientDebugAddScrap;
+  | ClientDebugAddScrap
+  | ClientSetAutoFortifyMode;
 
 export interface PlayerPresence {
   playerId: string;
@@ -301,6 +319,8 @@ export interface ServerEconomy {
   type: "economy";
   scrap: number;
   tflops: number;
+  /** ANU-042: this player's current auto-fortify preference, so a reconnecting client's control reflects it without a separate message. */
+  autoFortifyMode: AutoFortifyMode;
 }
 
 /**
@@ -587,6 +607,14 @@ export function parseClientMessage(raw: string): ClientMessage {
 
   if (type === "debugAddScrap") {
     return { type: "debugAddScrap" };
+  }
+
+  if (type === "setAutoFortifyMode") {
+    const { mode } = data as Partial<ClientSetAutoFortifyMode>;
+    if (typeof mode !== "string" || !(AUTO_FORTIFY_MODES as readonly string[]).includes(mode)) {
+      throw new Error(`'setAutoFortifyMode' requires 'mode' to be one of: ${AUTO_FORTIFY_MODES.join(", ")}`);
+    }
+    return { type: "setAutoFortifyMode", mode: mode as AutoFortifyMode };
   }
 
   throw new Error(`unknown message type: ${String(type)}`);

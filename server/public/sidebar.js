@@ -46,6 +46,7 @@ export { suburbDetailViewModel };
  * @property {{scrap: number}} economy
  * @property {SkillTreeState | null} skillTree - null until the first
  *   `skillTree` message arrives.
+ * @property {import("../protocol.ts").AutoFortifyMode} autoFortifyMode - ANU-042, carried on `economy`.
  */
 
 /**
@@ -74,6 +75,7 @@ const panels = {
 };
 const suburbDetailEl = /** @type {HTMLElement} */ (document.getElementById("suburb-detail"));
 const unitListEl = /** @type {HTMLElement} */ (document.getElementById("unit-list"));
+const autoFortifyOptionsEl = /** @type {HTMLElement} */ (document.getElementById("auto-fortify-options"));
 const factoryListEl = /** @type {HTMLElement} */ (document.getElementById("factory-list"));
 const skillTreeListEl = /** @type {HTMLElement} */ (document.getElementById("skill-tree-list"));
 const skillTreeTflopsEl = /** @type {HTMLElement} */ (document.getElementById("skill-tree-tflops"));
@@ -433,6 +435,20 @@ function renderUnitList() {
   unitListEl.replaceChildren(...rows);
 }
 
+/**
+ * Highlights the currently-active auto-fortify mode button (ANU-042) —
+ * click handlers are wired once in mountSidebar, same as the sidebar tabs
+ * above; this just reflects `currentState.autoFortifyMode` on every state
+ * update, including a reconnect, so the control never silently disagrees
+ * with the server's stored preference.
+ */
+function renderAutoFortify() {
+  if (!currentState) return;
+  for (const button of autoFortifyOptionsEl.querySelectorAll(".auto-fortify__option")) {
+    button.setAttribute("aria-pressed", String(button.getAttribute("data-mode") === currentState.autoFortifyMode));
+  }
+}
+
 function renderFactoryList() {
   if (!currentState) return;
   const { factories, myPlayerId } = currentState;
@@ -611,6 +627,11 @@ export function mountSidebar({ send: sendFn }) {
   }
   handleEl.addEventListener("click", () => sidebarEl.classList.toggle("sidebar--expanded"));
   debugAddScrapEl.addEventListener("click", () => send({ type: "debugAddScrap" }));
+  for (const button of autoFortifyOptionsEl.querySelectorAll(".auto-fortify__option")) {
+    button.addEventListener("click", () => {
+      send({ type: "setAutoFortifyMode", mode: button.getAttribute("data-mode") });
+    });
+  }
   showTab("territory");
 }
 
@@ -634,6 +655,7 @@ export function updateSidebarState(state) {
   scrapEl.textContent = String(state.economy.scrap);
   renderSuburbDetail();
   renderUnitList();
+  renderAutoFortify();
   renderFactoryList();
   renderSkillTree();
 }

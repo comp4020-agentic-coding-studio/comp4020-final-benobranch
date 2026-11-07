@@ -401,6 +401,41 @@ button:not(:disabled):hover {
   border-color: var(--accent-dim);
 }
 
+/* ANU-042: auto-fortify mode picker, same three-button-row convention as
+   .sidebar-tabs/.sidebar-tab above. */
+.auto-fortify {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.auto-fortify__label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.auto-fortify__options {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.3rem;
+}
+
+.auto-fortify__option {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.75rem;
+  background: var(--bg);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+
+.auto-fortify__option[aria-pressed="true"] {
+  background: var(--accent-dim);
+  color: #d9fff7;
+  border-color: var(--accent-dim);
+}
+
 .sidebar-economy {
   display: flex;
   gap: 1rem;

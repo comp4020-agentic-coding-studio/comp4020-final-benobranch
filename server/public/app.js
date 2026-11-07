@@ -18,6 +18,7 @@
 /** @typedef {import("../protocol.ts").FactoryState} FactoryState */
 /** @typedef {import("../protocol.ts").UnitTypeCatalogEntry} UnitTypeCatalogEntry */
 /** @typedef {import("../protocol.ts").SuburbCaptureState} SuburbCaptureState */
+/** @typedef {import("../protocol.ts").AutoFortifyMode} AutoFortifyMode */
 import { mountMap, unmountMap, renderOwnership, renderBases, renderUnits, renderTransit, renderFactories, renderCapture, setUnitCatalog } from "./map.js";
 import { mountSidebar, unmountSidebar, updateSidebarState, selectFromMap, showSidebarError } from "./sidebar.js";
 
@@ -129,6 +130,8 @@ let unitCatalog = [];
 // it's displayed from `skillTree` instead (a research-speed stat, not a
 // scrap-like balance).
 let economy = { scrap: 0 };
+/** @type {import("../protocol.ts").AutoFortifyMode} ANU-042: this player's current auto-fortify preference, carried on `economy`. */
+let autoFortifyMode = "off";
 /** @type {import("./sidebar.js").SkillTreeState | null} ANU-029: this player's latest `skillTree` message. */
 let skillTree = null;
 let sidebarMounted = false;
@@ -161,7 +164,7 @@ function send(/** @type {Record<string, unknown>} */ message) {
 // changes, but only once the sidebar is actually mounted (a started lobby).
 function updateSidebar() {
   if (!sidebarMounted || !currentLobby || !myPlayerId) return;
-  updateSidebarState({ lobby: currentLobby, myPlayerId, occupancy, factories, unitCatalog, economy, skillTree });
+  updateSidebarState({ lobby: currentLobby, myPlayerId, occupancy, factories, unitCatalog, economy, skillTree, autoFortifyMode });
 }
 
 /** @returns {{ screen: "home" | "browse" | "lobby" | "options", lobbyId?: string }} */
@@ -396,6 +399,7 @@ function handleMessage(/** @type {ServerMessage} */ msg) {
     updateSidebar();
   } else if (msg.type === "economy") {
     economy = { scrap: msg.scrap };
+    autoFortifyMode = msg.autoFortifyMode;
     updateSidebar();
   } else if (msg.type === "skillTree") {
     // Per-player on the server side already; the playerId check just guards

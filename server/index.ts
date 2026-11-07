@@ -9,6 +9,7 @@ import { openStore, type StoredLobby } from "./store.ts";
 import { createTerritory } from "./territory.ts";
 import { createUnits, listUnitTypes } from "./units.ts";
 import { createFactories } from "./factories.ts";
+import { createAutoFortify } from "./auto-fortify.ts";
 import { createSkillTree, speedMultiplier as skillTreeSpeedMultiplier } from "./skill-tree.ts";
 import { createTflopsSource } from "./tflops.ts";
 import { elapsedMs } from "./time.ts";
@@ -38,6 +39,7 @@ const units = createUnits(store.db);
 const factories = createFactories(store.db, units);
 const tflopsSource = createTflopsSource(territory);
 const skillTree = createSkillTree(store.db, tflopsSource);
+const autoFortify = createAutoFortify(territory, units, (lobbyId, playerId) => store.getAutoFortifyMode(lobbyId, playerId));
 
 interface ConnMeta {
   playerId: string;
@@ -193,7 +195,12 @@ function broadcastCaptures(lobbyId: string): void {
 function sendEconomyToPlayer(lobbyId: string, playerId: string): void {
   const economy = store.getMemberEconomy(lobbyId, playerId);
   if (!economy) return;
-  const message: ServerMessage = { type: "economy", scrap: economy.scrap, tflops: tflopsSource.getTflops(lobbyId, playerId) };
+  const message: ServerMessage = {
+    type: "economy",
+    scrap: economy.scrap,
+    tflops: tflopsSource.getTflops(lobbyId, playerId),
+    autoFortifyMode: store.getAutoFortifyMode(lobbyId, playerId),
+  };
   for (const [socket, meta] of sockets) {
     if (meta.lobbyId === lobbyId && meta.playerId === playerId) send(socket, message);
   }
@@ -338,6 +345,28 @@ const arrivalTicker = setInterval(() => {
   }
 }, 1000);
 arrivalTicker.unref();
+
+// Same ~1s per-lobby sweep shape as factoryTicker/captureTicker/
+// arrivalTicker above, for ANU-042's auto-fortify: each member whose mode
+// isn't "off" gets one redistribution round dispatched through the normal
+// moveUnits path (settleArrivals first, same reasoning as placeUnit/
+// moveUnits below, so a round never redistributes against stale in-transit
+// counts). Any dispatch this produces shows up via the next occupancy/
+// captures broadcast, same as a player-initiated move.
+const autoFortifyTicker = setInterval(() => {
+  const liveLobbyIds = new Set([...sockets.values()].map((m) => m.lobbyId).filter((id): id is string => id !== null));
+  for (const lobbyId of liveLobbyIds) {
+    if (!store.getLobby(lobbyId)?.started) continue;
+    settleArrivals(lobbyId);
+    const members = store.getLobbyMembers(lobbyId).filter((m) => store.getAutoFortifyMode(lobbyId, m.playerId) !== "off");
+    if (members.length === 0) continue;
+    for (const member of members) autoFortify.run(lobbyId, member.playerId);
+    broadcastOccupancy(lobbyId);
+    broadcastCaptures(lobbyId);
+  }
+}, 1000);
+autoFortifyTicker.unref();
+
 
 wss.on("connection", (socket) => {
   alive.add(socket);
@@ -521,6 +550,13 @@ wss.on("connection", (socket) => {
       if (!meta.lobbyId || !store.getLobby(meta.lobbyId)?.started) return;
       store.addScrap(meta.lobbyId, meta.playerId, DEBUG_ADD_SCRAP_AMOUNT);
       sendEconomyToPlayer(meta.lobbyId, meta.playerId);
+      return;
+    }
+
+    if (message.type === "setAutoFortifyMode") {
+      if (!meta.lobbyId) return; // a lobby-scoped preference — nothing to set before joining one
+      store.setAutoFortifyMode(meta.lobbyId, meta.playerId, message.mode);
+      sendEconomyToPlayer(meta.lobbyId, meta.playerId); // economy carries autoFortifyMode (ANU-042)
       return;
     }
 
