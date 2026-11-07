@@ -170,19 +170,24 @@ it("a kill inside a moveUnits order sends economy to the attacker only, not to a
   attacker.messages.length = 0;
   bystander.messages.length = 0;
 
+  // ANU-043: a "hit" that doesn't kill the defender now ADVANCES the
+  // attacker into targetSalCode (it stays there, contesting it) rather than
+  // retreating to spawnSalCode — so once the attacker has reached
+  // targetSalCode, subsequent dispatches must originate from there too.
+  let currentSalCode = spawnSalCode;
   let scrap: number | undefined;
   for (let i = 0; i < 20 && scrap === undefined; i++) {
     send(bystander, { type: "placeUnit", sal_code: targetSalCode, unitTypeKey: "drone" });
     await waitFor(bystander, (m) => m.type === "occupancy", 1000);
-    send(attacker, { type: "moveUnits", fromSalCode: spawnSalCode, toSalCode: targetSalCode, counts: { robot: 1 } });
+    send(attacker, { type: "moveUnits", fromSalCode: currentSalCode, toSalCode: targetSalCode, counts: { robot: 1 } });
     try {
       const economy = await waitFor(attacker, (m) => m.type === "economy", 1000);
       scrap = economy.scrap as number;
     } catch {
-      // Survived the hit — not yet a kill. A "hit" outcome leaves the
-      // attacker's sal_code unchanged and releases it from transit
-      // (server/units.ts), so the next iteration's moveUnits can dispatch
-      // it again against a fresh defender with no repositioning needed.
+      // Survived the hit — not yet a kill. The attacker advanced into
+      // targetSalCode (ANU-043), so the next iteration attacks in place
+      // against a fresh defender.
+      currentSalCode = targetSalCode;
     }
   }
   expect(scrap, "attacker should have landed a kill within 20 attempts").toBeDefined();

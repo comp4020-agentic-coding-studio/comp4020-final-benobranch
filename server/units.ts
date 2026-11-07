@@ -35,7 +35,14 @@ export type AttackOutcome =
   // Target held no enemy unit ("undefended" — see Notes in issues/ANU-014.md
   // for the exact definition) — the attack completes as a plain move.
   | { outcome: "moved"; unit: OccupantUnit }
-  // Defender survived the hit; attacker stays put, both units remain.
+  // Defender survived the hit: the attacker still advances into `salCode`
+  // (ANU-043) — both units now occupy it together, contested, neither
+  // destroyed. Pre-ANU-043 this left the attacker at its ORIGIN instead,
+  // which was invisible back when combat resolved synchronously at dispatch
+  // (nothing had moved yet to visibly un-move) but became a visible
+  // teleport-back-to-source the moment ANU-038 added real travel: a unit
+  // would fly all the way to the destination and then snap home on a
+  // non-killing hit. See issues/ANU-043.md's Resolution.
   | { outcome: "hit"; attacker: OccupantUnit; defender: OccupantUnit; damageDealt: number }
   // Defender's health reached 0: it's destroyed, the attacker credits
   // scrap (scaled by the scrapPerKillMultiplier perk hook) and advances
@@ -304,12 +311,12 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
   const selectUnit = db.prepare(
     "SELECT id, owner_player_id AS ownerPlayerId, sal_code AS salCode, unit_type_key AS unitTypeKey, health FROM units WHERE id = ? AND lobby_id = ?",
   );
-  // ANU-038: a completed arrival ("moved"/"kill") both relocates the unit
-  // AND clears its transit stamps in one statement — a "hit" outcome
-  // (stayPut below) clears the stamps without touching sal_code, since the
-  // attacker stays put at its ORIGIN, not the contested destination.
+  // A completed arrival relocates the unit AND clears its transit stamps in
+  // one statement, for every AttackOutcome ("moved", "hit", "kill" — ANU-043:
+  // a "hit" that doesn't kill the defender still advances the attacker into
+  // `salCode`, same as the other two outcomes, so this single statement
+  // covers all of resolveCombatAt's relocating paths).
   const arriveUnit = db.prepare("UPDATE units SET sal_code = ?, destination_sal_code = NULL, move_started_at = NULL WHERE id = ?");
-  const stayPut = db.prepare("UPDATE units SET destination_sal_code = NULL, move_started_at = NULL WHERE id = ?");
   const updateUnitHealth = db.prepare("UPDATE units SET health = ? WHERE id = ?");
   const deleteUnit = db.prepare("DELETE FROM units WHERE id = ?");
   const selectOccupancy = db.prepare(`
@@ -447,15 +454,19 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
 
     if (remainingHealth > 0) {
       updateUnitHealth.run(remainingHealth, defender.id);
-      // The attacker stays at its ORIGIN, not the contested destination —
-      // for the instant `attackSuburb` primitive that's already `row`'s
-      // sal_code, a no-op; for an arriving unit (settleArrivals below) this
-      // also clears its now-finished transit stamps, same as a "moved"/
-      // "kill" arrival, just without relocating it.
-      stayPut.run(row.id);
+      // ANU-043: the attacker still advances into `salCode`, same as a
+      // "moved"/"kill" outcome — a hit that doesn't kill the defender
+      // leaves both units occupying the destination, contested, rather
+      // than snapping the attacker back to its origin. For the instant
+      // `attackSuburb` primitive salCode usually already IS `row`'s
+      // sal_code (a no-op repositioning); for an arriving unit
+      // (settleArrivals below) this is what stops a unit that traveled
+      // all the way to a defended destination and survived combat from
+      // visibly teleporting back home the instant it arrives.
+      arriveUnit.run(salCode, row.id);
       return {
         outcome: "hit",
-        attacker: toOccupant(settled),
+        attacker: toOccupant({ ...settled, salCode }),
         defender: toOccupant({ ...defender, health: remainingHealth }),
         damageDealt,
       };

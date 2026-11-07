@@ -193,6 +193,10 @@ it("combat resolution is deterministic for a given rng sequence (same inputs, sa
   if (result.ok && result.outcome === "hit") {
     expect(result.damageDealt).toBe(2);
     expect(result.defender.health).toBe(defender.unit.health - 2);
+    // ANU-043: a "hit" that doesn't kill the defender still advances the
+    // attacker into the contested suburb, same as "moved"/"kill" — it
+    // doesn't retreat to its origin.
+    expect(result.attacker.sal_code).toBe(NON_ADJACENT_SAL_CODE);
   } else {
     throw new Error(`expected a 'hit' outcome, got ${JSON.stringify(result)}`);
   }
@@ -423,11 +427,18 @@ it("settleArrivals resolves combat against a defended destination on arrival —
   expect(outcomes).toHaveLength(2);
   expect(outcomes.every((o) => o.outcome === "hit")).toBe(true);
 
-  // Neither attacker advanced into the still-defended suburb (a "hit"
-  // outcome leaves the attacker in place, same as single-unit attackSuburb)
-  // — and both are released from transit (no longer in-flight forever).
+  // ANU-043: both attackers ADVANCE into the still-defended suburb on a
+  // "hit" outcome — a unit that travels to a contested destination and
+  // survives combat stays there, engaged, rather than snapping back to its
+  // origin (pre-fix, this asserted `atDestination` was empty — the exact
+  // "half the units teleport back to source" bug the user reported in live
+  // play, since nothing had actually moved there yet to visibly un-move
+  // before ANU-038 added real travel time). Both are released from transit
+  // (no longer in-flight forever) and neither is back at SPAWN_SAL_CODE.
   const atDestination = units.getOccupancy(lobbyId).filter((u) => u.sal_code === ADJACENT_SAL_CODE && u.ownerPlayerId === owner);
-  expect(atDestination).toHaveLength(0);
+  expect(atDestination).toHaveLength(2);
+  const atSource = units.getOccupancy(lobbyId).filter((u) => u.sal_code === SPAWN_SAL_CODE && u.ownerPlayerId === owner);
+  expect(atSource).toHaveLength(0);
   const stillInTransit = units.getOccupancy(lobbyId).filter((u) => u.ownerPlayerId === owner && u.destinationSalCode);
   expect(stillInTransit).toHaveLength(0);
   store.close();
