@@ -215,3 +215,61 @@ it("a moveUnits payload with a non-integer count is rejected at parse time", asy
   const { code } = await closed;
   expect(code).toBe(1008);
 });
+
+// --- ANU-048: an "emp" unit's arrival broadcasts LobbyState.empActiveUntil --- //
+
+const empTestDataDir = mkdtempSync(join(tmpdir(), "anu048-moveunits-emp-"));
+const empTestPort = 8112; // 8111 is spec/occupancy.test.ts
+let empTestServer: SpawnedServer | undefined;
+afterAll(async () => {
+  await empTestServer?.stop();
+  rmSync(empTestDataDir, { recursive: true, force: true });
+});
+
+it("an emp unit's arrival relays a lobbyState broadcast carrying the new blackout on empActiveUntil, not just occupancy", async () => {
+  // A high scale so an emp's (drone-speed) travel time resolves within a
+  // real second or two over this fixture's distance — same reasoning
+  // spec/combat.test.ts/this file's own kill test document.
+  empTestServer = await spawnServer({ port: empTestPort, dataDir: empTestDataDir, gameTimeScale: 500 });
+  const url = empTestServer.baseUrl;
+
+  const lobbyName = `moveunits-emp-${Date.now()}`;
+  const launcher = await connect(url);
+  send(launcher, { type: "createLobby", name: lobbyName, capacity: 4, callsign: "launcher" });
+  await waitFor(launcher, (m) => m.type === "lobbyState" && (m.lobby as { name: string }).name === lobbyName);
+  send(launcher, { type: "startLobby" });
+  await waitFor(launcher, (m) => m.type === "lobbyState" && (m.lobby as { started: boolean }).started);
+
+  const spawnSalCode = nameToSalCode.get(mapData.spawn_table_by_lobby_size["4"].spawns[0])!;
+  const targetSalCode = [...adjacency.get(spawnSalCode)!][0];
+
+  // placeUnit doesn't check requires_skill_node (only server/factories.ts's
+  // getBuildableUnitTypes does — see server/units.ts) — same "any suburb,
+  // any type" placement primitive spec/units.test.ts already relies on for
+  // its own base-roster fixtures, used here to place an "emp" unit directly
+  // without going through a real 5-minute research unlock.
+  send(launcher, { type: "placeUnit", sal_code: spawnSalCode, unitTypeKey: "emp" });
+  await waitFor(launcher, (m) => m.type === "occupancy" && (m.units as { sal_code: string; unitTypeKey: string }[]).some((u) => u.sal_code === spawnSalCode && u.unitTypeKey === "emp"));
+
+  launcher.messages.length = 0; // clear history before waiting for the detonation's own broadcast
+
+  send(launcher, { type: "moveUnits", fromSalCode: spawnSalCode, toSalCode: targetSalCode, counts: { emp: 1 } });
+
+  const lobbyStateAfterDetonation = await waitFor(
+    launcher,
+    (m) => m.type === "lobbyState" && Boolean((m.lobby as { empActiveUntil?: Record<string, string> }).empActiveUntil?.[targetSalCode]),
+    10_000,
+  );
+  const empActiveUntil = (lobbyStateAfterDetonation.lobby as { empActiveUntil: Record<string, string> }).empActiveUntil;
+  expect(Date.parse(empActiveUntil[targetSalCode])).toBeGreaterThan(Date.now()); // a real future expiry, not a stale/garbage value
+
+  // The emp unit itself is consumed — occupancy no longer shows it anywhere.
+  // waitFor's predicate must specifically match the POST-detonation
+  // broadcast (no "emp" present) rather than any occupancy message: an
+  // earlier one (right after dispatch, still in transit) still carries it,
+  // and waitFor resolves the FIRST match in message history.
+  const occupancyAfter = await waitFor(launcher, (m) => m.type === "occupancy" && !(m.units as { unitTypeKey: string }[]).some((u) => u.unitTypeKey === "emp"), 2000);
+  expect((occupancyAfter.units as { unitTypeKey: string }[]).some((u) => u.unitTypeKey === "emp")).toBe(false);
+
+  await closeAndWait(launcher);
+}, 20_000);

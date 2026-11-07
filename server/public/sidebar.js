@@ -300,7 +300,7 @@ function renderSuburbDetail() {
   if (!currentState || !currentSelection || currentSelection.type !== "suburb") return;
   const { lobby, occupancy, factories, myPlayerId } = currentState;
   const sal_code = currentSelection.sal_code;
-  const detail = suburbDetailViewModel({ sal_code, ownership: lobby.ownership, occupancy, factories, members: lobby.members, myPlayerId });
+  const detail = suburbDetailViewModel({ sal_code, ownership: lobby.ownership, occupancy, factories, members: lobby.members, myPlayerId, empActiveUntil: lobby.empActiveUntil });
 
   const name = document.createElement("p");
   name.className = "suburb-detail__name";
@@ -315,6 +315,15 @@ function renderSuburbDetail() {
   owner.appendChild(dot);
   owner.appendChild(document.createTextNode(detail.ownerName ? `Owned by ${detail.ownerName}` : "Unclaimed"));
   suburbDetailEl.appendChild(owner);
+
+  // ANU-048: surfaces why a blacked-out suburb's factory (if any) looks
+  // idle, rather than leaving a stalled progress bar unexplained.
+  if (detail.empCountdownLabel) {
+    const empStatus = document.createElement("p");
+    empStatus.className = "suburb-detail__emp-status";
+    empStatus.textContent = `EMP blackout — ${detail.empCountdownLabel} remaining`;
+    suburbDetailEl.appendChild(empStatus);
+  }
 
   if (detail.occupantGroups.length > 0) {
     // ANU-035: one row per (owner, unit type) with a count, not one row per

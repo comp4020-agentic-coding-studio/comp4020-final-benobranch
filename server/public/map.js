@@ -41,6 +41,7 @@ import { DATA_CENTER_TIER_ICONS, DATA_CENTER_TIER_MARKER_SIZE } from "./data-cen
 import { UNIT_ARCHETYPE_ICONS, UNIT_MARKER_SIZE } from "./unit-icon.js";
 import { PLAYER_BASE_ICON, PLAYER_BASE_MARKER_SIZE } from "./base-icon.js";
 import { zoneVisual } from "./capture-visual.js";
+import { empBlackoutVisual } from "./emp-blackout-visual.js";
 
 /**
  * @typedef {{idx: number, sal_code: string, name: string, is_remainder: boolean}} MapSuburb
@@ -80,6 +81,9 @@ const factoriesLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (docum
 const ownershipLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-ownership")));
 const captureProgressLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-capture-progress")));
 const captureDefs = /** @type {SVGDefsElement} */ (/** @type {unknown} */ (document.getElementById("map-capture-defs")));
+const empLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-emp")));
+const empCountdownLayer = /** @type {SVGGElement} */ (/** @type {unknown} */ (document.getElementById("map-emp-countdown")));
+const empDefs = /** @type {SVGDefsElement} */ (/** @type {unknown} */ (document.getElementById("map-emp-defs")));
 const tooltip = /** @type {HTMLElement} */ (document.getElementById("map-tooltip"));
 const container = /** @type {HTMLElement} */ (document.getElementById("map-container"));
 const attributionEl = /** @type {HTMLElement} */ (document.getElementById("map-attribution"));
@@ -477,6 +481,81 @@ export function renderCapture(captures, ownership, members) {
       fillBar.setAttribute("class", "capture-progress__fill");
       group.append(track, fillBar);
       captureProgressLayer.appendChild(group);
+    }
+  }
+}
+
+/**
+ * Renders ANU-048's EMP blackout overlay: a red border, red diagonal
+ * stripes, and a white "MM:SS remaining" countdown for every suburb with an
+ * active blackout — the owner's plain fill (.suburb path, renderOwnership)
+ * is left completely untouched, per the user's explicit "the underlying
+ * fill colour of a territory should still be the colour of the occupying
+ * player" instruction. Full redraw on every `lobbyState` broadcast (the
+ * field this reads, LobbyState.empActiveUntil, rides on that message, not
+ * its own) — same replaceChildren-then-rebuild precedent as renderCapture;
+ * sparse, so only currently-blacked-out suburbs draw anything.
+ *
+ * The stripe pattern reuses renderCapture's own rotate-45/tile-320
+ * technique (a single, non-pulsing red band per blacked-out suburb — a
+ * persistent status, not an active contest, so it never pulses the way an
+ * invader's capture-stripe does) rather than inventing a new stripe
+ * mechanism.
+ * @param {Record<string, string>} empActiveUntil - sal_code -> ISO expiry, sparse (server/protocol.ts's LobbyState.empActiveUntil)
+ */
+export function renderEmpBlackout(empActiveUntil) {
+  empLayer.replaceChildren();
+  empCountdownLayer.replaceChildren();
+  empDefs.replaceChildren();
+
+  const now = Date.now();
+  const TILE = 320;
+  for (const [sal_code, expiresAt] of Object.entries(empActiveUntil)) {
+    const { active, countdownLabel } = empBlackoutVisual({ empActiveUntil: expiresAt, now });
+    if (!active) continue; // expired since the last broadcast — not yet cleared server-side, but nothing to draw
+    const geo = sal_codeToGeo.get(sal_code);
+    if (!geo) continue;
+
+    const patternId = `emp-stripe-${sal_code}`;
+    const pattern = document.createElementNS("http://www.w3.org/2000/svg", "pattern");
+    pattern.setAttribute("id", patternId);
+    pattern.setAttribute("patternUnits", "userSpaceOnUse");
+    pattern.setAttribute("width", String(TILE));
+    pattern.setAttribute("height", String(TILE));
+    pattern.setAttribute("patternTransform", "rotate(45)");
+    const band = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    band.setAttribute("x", "0");
+    band.setAttribute("y", "0");
+    band.setAttribute("width", String(TILE / 2));
+    band.setAttribute("height", String(TILE));
+    band.setAttribute("class", "emp-stripe__band");
+    pattern.appendChild(band);
+    empDefs.appendChild(pattern);
+
+    const stripeOverlay = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    stripeOverlay.setAttribute("d", geo.path);
+    stripeOverlay.setAttribute("fill", `url(#${patternId})`);
+    stripeOverlay.setAttribute("class", "emp-stripe");
+    empLayer.appendChild(stripeOverlay);
+
+    const borderOverlay = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    borderOverlay.setAttribute("d", geo.path);
+    borderOverlay.setAttribute("class", "emp-border");
+    empLayer.appendChild(borderOverlay);
+
+    if (countdownLabel) {
+      const [x, cy] = geo.label_point;
+      const ICON_HALF = Math.max(UNIT_MARKER_SIZE, PLAYER_BASE_MARKER_SIZE) / 2;
+      const COUNTDOWN_GAP = 60;
+      const y = cy - ICON_HALF - COUNTDOWN_GAP; // above the suburb's icon, mirroring capture-progress's below-icon placement
+      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      text.setAttribute("x", String(x));
+      text.setAttribute("y", String(y));
+      text.setAttribute("text-anchor", "middle");
+      text.setAttribute("dominant-baseline", "auto");
+      text.setAttribute("class", "emp-countdown");
+      text.textContent = countdownLabel;
+      empCountdownLayer.appendChild(text);
     }
   }
 }
