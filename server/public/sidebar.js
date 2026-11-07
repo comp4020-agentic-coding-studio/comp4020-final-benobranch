@@ -65,6 +65,7 @@ const handleEl = /** @type {HTMLButtonElement} */ (document.getElementById("side
 const tabsEl = /** @type {HTMLElement} */ (document.getElementById("sidebar-tabs"));
 const economyEl = /** @type {HTMLElement} */ (document.getElementById("sidebar-economy"));
 const scrapEl = /** @type {HTMLElement} */ (document.getElementById("sidebar-scrap"));
+const debugAddScrapEl = /** @type {HTMLButtonElement} */ (document.getElementById("debug-add-scrap"));
 const panels = {
   territory: /** @type {HTMLElement} */ (document.getElementById("panel-territory")),
   units: /** @type {HTMLElement} */ (document.getElementById("panel-units")),
@@ -601,6 +602,7 @@ export function mountSidebar({ send: sendFn }) {
     });
   }
   handleEl.addEventListener("click", () => sidebarEl.classList.toggle("sidebar--expanded"));
+  debugAddScrapEl.addEventListener("click", () => send({ type: "debugAddScrap" }));
   showTab("territory");
 }
 

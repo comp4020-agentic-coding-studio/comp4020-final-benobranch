@@ -29,6 +29,8 @@ const PUBLIC_DIR = process.env.PUBLIC_DIR ?? "server/public";
 // Baked map data (scripts/map/build_lobby_config.py, build_geometry.py) —
 // read-only reference data, not part of DATA_DIR's mutable game state.
 const MAP_DATA_DIR = process.env.MAP_DATA_DIR ?? "scripts/map/data";
+/** Debug "spawn scrap" button (ANU-046) credit amount — see protocol.ts's ClientDebugAddScrap. */
+const DEBUG_ADD_SCRAP_AMOUNT = 100;
 
 const store = openStore(`${DATA_DIR}/game.db`);
 const territory = createTerritory(store.db);
@@ -512,6 +514,13 @@ wss.on("connection", (socket) => {
         return;
       }
       sendSkillTreeToPlayer(meta.lobbyId, meta.playerId);
+      return;
+    }
+
+    if (message.type === "debugAddScrap") {
+      if (!meta.lobbyId || !store.getLobby(meta.lobbyId)?.started) return;
+      store.addScrap(meta.lobbyId, meta.playerId, DEBUG_ADD_SCRAP_AMOUNT);
+      sendEconomyToPlayer(meta.lobbyId, meta.playerId);
       return;
     }
 

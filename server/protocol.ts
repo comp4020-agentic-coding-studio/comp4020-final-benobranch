@@ -115,6 +115,19 @@ export interface ClientBuildFactory {
   sal_code: string;
 }
 
+export interface ClientDebugAddScrap {
+  /**
+   * Dev/testing shortcut (ANU-046): credits DEBUG_ADD_SCRAP_AMOUNT scrap to
+   * the sender directly, bypassing the normal kill-credit path
+   * (server/units.ts's creditScrap), so factories (the only scrap sink —
+   * see ANU-022) can be iterated on without grinding combat for scrap
+   * first. Left unguarded rather than env-gated — this is a solo-dev course
+   * prototype, not a shared deploy with other real players to protect it
+   * from (confirmed with the user via AskUserQuestion).
+   */
+  type: "debugAddScrap";
+}
+
 export interface ClientStartResearch {
   /**
    * Starts researching a skill-tree node (ANU-016, time-gated by ANU-019):
@@ -142,7 +155,8 @@ export type ClientMessage =
   | ClientPlaceUnit
   | ClientMoveUnits
   | ClientBuildFactory
-  | ClientStartResearch;
+  | ClientStartResearch
+  | ClientDebugAddScrap;
 
 export interface PlayerPresence {
   playerId: string;
@@ -569,6 +583,10 @@ export function parseClientMessage(raw: string): ClientMessage {
       throw new Error("'startResearch' requires a non-empty 'nodeId'");
     }
     return { type: "startResearch", nodeId };
+  }
+
+  if (type === "debugAddScrap") {
+    return { type: "debugAddScrap" };
   }
 
   throw new Error(`unknown message type: ${String(type)}`);
