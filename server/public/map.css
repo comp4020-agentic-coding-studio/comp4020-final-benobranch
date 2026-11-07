@@ -147,24 +147,11 @@
 
 .suburb {
   fill: #16222a;
-  /* ANU-040 (replaces ANU-036's whole-map blur+quantize filter, which
-     washed out these borders and corrupted ownership fill color — see
-     issues/ANU-040.md): a bright, thick border instead of the previous
-     hairline, so it reads as "super visible" even before pixelation.
-     --accent-dim here (not --accent) leaves room for :hover/.selected
-     below to step up to the brighter --accent, same highlight contrast
-     the old #0a4a42 -> var(--accent) pair gave, just both ends brighter. */
+  /* A bright, thick border instead of a hairline, so it reads as "super
+     visible". --accent-dim here (not --accent) leaves room for
+     :hover/.selected below to step up to the brighter --accent. */
   stroke: var(--accent-dim);
   stroke-width: 3;
-  /* shape-rendering: crispEdges disables anti-aliasing on this path's fill
-     and stroke, so curved/diagonal suburb borders rasterize as stair-stepped
-     pixel blocks instead of smooth lines — the "pixelate the boundaries"
-     effect, scoped to just these paths. It's a rasterization hint only: it
-     doesn't touch fill/stroke color, so ownership tints (renderOwnership's
-     inline `style="fill: ..."`) are unaffected, unlike ANU-036's filter.
-     Icon layers (dc/unit/base/factory markers) live in separate <g>s and
-     never had this property, so they're untouched too. */
-  shape-rendering: crispEdges;
   /* non-scaling-stroke means this width is in screen pixels, not map
      units, regardless of current zoom — so it stays constant at any
      zoom level instead of scaling with the viewBox like the geometry. */
