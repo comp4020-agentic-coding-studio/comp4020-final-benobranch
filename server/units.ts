@@ -219,13 +219,25 @@ function buildAdjacency(): Map<string, Set<string>> {
 const adjacency = buildAdjacency();
 
 /**
+ * Every map-adjacent sal_code for a given suburb (empty set for one with no
+ * edges) — exported for server/auto-fortify.ts's border/landlocked
+ * classification (ANU-042), which needs the raw neighbour set itself, not
+ * just the owned-or-adjacent-to-owned boolean groundCanReach below computes.
+ * Reuses this module's own adjacency map rather than re-deriving it from
+ * map-geometry.json/map.json a second time.
+ */
+export function adjacentSalCodes(salCode: string): ReadonlySet<string> {
+  return adjacency.get(salCode) ?? new Set();
+}
+
+/**
  * A "ground" (robot) unit may reach a suburb it already owns, or one
  * road-adjacent to a suburb it owns — owned-but-not-yet-adjacent-to-
  * anything-else suburbs (e.g. an isolated spawn) must stay reachable by
  * their own owner, so "owned" alone has to count, not just "neighbour of
  * owned".
  */
-function groundCanReach(ownedSalCodes: ReadonlySet<string>, target: string): boolean {
+export function groundCanReach(ownedSalCodes: ReadonlySet<string>, target: string): boolean {
   if (ownedSalCodes.has(target)) return true;
   const neighbours = adjacency.get(target);
   if (!neighbours) return false;

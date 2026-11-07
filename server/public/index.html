@@ -162,6 +162,20 @@
 
         <section id="panel-units" class="sidebar-panel" hidden>
           <h2>Your units</h2>
+          <!-- ANU-042: auto-fortify — automatically redistributes surplus
+               units away from an over-threshold territory to the player's
+               other owned territories, either evening out counts
+               ("Balance") or weighting surplus toward outward-facing
+               territories ("Border"). Off by default; takes effect on the
+               next ~1s auto-fortify sweep (server/index.ts). -->
+          <div id="auto-fortify" class="auto-fortify">
+            <span class="auto-fortify__label">Auto-fortify</span>
+            <div id="auto-fortify-options" class="auto-fortify__options" role="radiogroup" aria-label="Auto-fortify mode">
+              <button type="button" class="auto-fortify__option" data-mode="off">Off</button>
+              <button type="button" class="auto-fortify__option" data-mode="balance">Balance</button>
+              <button type="button" class="auto-fortify__option" data-mode="border">Border</button>
+            </div>
+          </div>
           <ul id="unit-list" class="roster-list"></ul>
         </section>
 

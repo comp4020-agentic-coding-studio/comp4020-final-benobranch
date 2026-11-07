@@ -57,6 +57,9 @@ export interface MemberEconomy {
   scrap: number;
 }
 
+/** ANU-042's per-player redistribution preference — see server/auto-fortify.ts. */
+export type AutoFortifyMode = "off" | "balance" | "border";
+
 export interface ResolvedPlayer {
   playerId: string;
   token: string;
@@ -77,6 +80,8 @@ export interface Store {
   getMemberName(lobbyId: string, playerId: string): string | null;
   getMemberColor(lobbyId: string, playerId: string): string | null;
   getMemberEconomy(lobbyId: string, playerId: string): MemberEconomy | null;
+  getAutoFortifyMode(lobbyId: string, playerId: string): AutoFortifyMode;
+  setAutoFortifyMode(lobbyId: string, playerId: string, mode: AutoFortifyMode): void;
   listLobbies(): StoredLobby[];
   createLobby(name: string, capacity: number, playerId: string, callsign: string): StoredLobby;
   joinLobby(playerId: string, lobbyId: string, callsign: string | undefined): JoinLobbyResult;
@@ -140,6 +145,12 @@ export function openStore(dbPath: string): Store {
   const selectMemberEconomy = db.prepare(
     "SELECT scrap FROM lobby_members WHERE lobby_id = ? AND player_id = ?",
   );
+  const selectAutoFortifyMode = db.prepare(
+    "SELECT auto_fortify_mode AS autoFortifyMode FROM lobby_members WHERE lobby_id = ? AND player_id = ?",
+  );
+  const updateAutoFortifyMode = db.prepare(
+    "UPDATE lobby_members SET auto_fortify_mode = ? WHERE lobby_id = ? AND player_id = ?",
+  );
   const countMembers = db.prepare("SELECT COUNT(*) AS n FROM lobby_members WHERE lobby_id = ?");
   const selectUsedColors = db.prepare("SELECT color FROM lobby_members WHERE lobby_id = ?");
   // Case-insensitive, trimmed-at-the-call-site comparison: this lobby's
@@ -175,7 +186,8 @@ export function openStore(dbPath: string): Store {
       perk_factory_build_cost_multiplier = 1,
       perk_scrap_per_kill_multiplier = 1,
       perk_capture_speed_multiplier = 1,
-      perk_data_transfer_speed_multiplier = 1
+      perk_data_transfer_speed_multiplier = 1,
+      auto_fortify_mode = 'off'
   `);
   // Reconnect / re-send of createLobby|joinLobby for a lobby already joined:
   // touches only name/color (both already locked and unchanged in practice —
@@ -240,6 +252,15 @@ export function openStore(dbPath: string): Store {
     getMemberEconomy(lobbyId, playerId) {
       const row = selectMemberEconomy.get(lobbyId, playerId) as MemberEconomy | undefined;
       return row ?? null;
+    },
+
+    getAutoFortifyMode(lobbyId, playerId) {
+      const row = selectAutoFortifyMode.get(lobbyId, playerId) as { autoFortifyMode: AutoFortifyMode } | undefined;
+      return row?.autoFortifyMode ?? "off";
+    },
+
+    setAutoFortifyMode(lobbyId, playerId, mode) {
+      updateAutoFortifyMode.run(mode, lobbyId, playerId);
     },
 
     listLobbies() {
@@ -749,6 +770,26 @@ function migrate(db: DatabaseSync): void {
     try {
       db.exec("ALTER TABLE unit_types ADD COLUMN speed REAL NOT NULL DEFAULT 1");
       db.exec("PRAGMA user_version = 10");
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
+  // v11 (ANU-042): a per-player auto-fortify preference — "off" (default,
+  // unchanged behaviour), "balance" (even out garrison counts across owned
+  // territories) or "border" (weight surplus toward outward-facing
+  // territories). Stored per lobby membership, same as a perk multiplier,
+  // since it resets to "off" on joining a fresh lobby the same way perks
+  // reset (insertMembership's ON CONFLICT branch below). Plain ADD COLUMN —
+  // an addition, not a drop, so issues/ANU-023.md's DROP COLUMN quirk
+  // doesn't apply.
+  if (version < 11) {
+    db.exec("BEGIN");
+    try {
+      db.exec("ALTER TABLE lobby_members ADD COLUMN auto_fortify_mode TEXT NOT NULL DEFAULT 'off'");
+      db.exec("PRAGMA user_version = 11");
       db.exec("COMMIT");
     } catch (err) {
       db.exec("ROLLBACK");
