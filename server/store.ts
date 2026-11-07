@@ -77,6 +77,8 @@ export interface Store {
   getMemberName(lobbyId: string, playerId: string): string | null;
   getMemberColor(lobbyId: string, playerId: string): string | null;
   getMemberEconomy(lobbyId: string, playerId: string): MemberEconomy | null;
+  /** Debug-only credit (ANU-046) — same unconditional `scrap = scrap + ?` shape as units.ts's combat-kill creditScrap, just not gated behind a kill. */
+  addScrap(lobbyId: string, playerId: string, amount: number): void;
   listLobbies(): StoredLobby[];
   createLobby(name: string, capacity: number, playerId: string, callsign: string): StoredLobby;
   joinLobby(playerId: string, lobbyId: string, callsign: string | undefined): JoinLobbyResult;
@@ -139,6 +141,9 @@ export function openStore(dbPath: string): Store {
   );
   const selectMemberEconomy = db.prepare(
     "SELECT scrap FROM lobby_members WHERE lobby_id = ? AND player_id = ?",
+  );
+  const creditScrapDebug = db.prepare(
+    "UPDATE lobby_members SET scrap = scrap + ? WHERE lobby_id = ? AND player_id = ?",
   );
   const countMembers = db.prepare("SELECT COUNT(*) AS n FROM lobby_members WHERE lobby_id = ?");
   const selectUsedColors = db.prepare("SELECT color FROM lobby_members WHERE lobby_id = ?");
@@ -240,6 +245,10 @@ export function openStore(dbPath: string): Store {
     getMemberEconomy(lobbyId, playerId) {
       const row = selectMemberEconomy.get(lobbyId, playerId) as MemberEconomy | undefined;
       return row ?? null;
+    },
+
+    addScrap(lobbyId, playerId, amount) {
+      creditScrapDebug.run(amount, lobbyId, playerId);
     },
 
     listLobbies() {
