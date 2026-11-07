@@ -1,9 +1,10 @@
 // Checks ANU-014's real drone/robot rules on top of ANU-013's occupancy
 // primitive: distinct stats, movement-mode reachability (drones ignore
-// adjacency/corridor, robots don't), and the random-element combat
-// resolution (confirmed with the user via AskUserQuestion — see
-// issues/ANU-014.md Resolution). Exercised by directly importing
-// server/units.ts against a real in-memory SQLite connection (same
+// adjacency/corridor below ANU-047's 5-hop ceiling, robots don't get the
+// ceiling at all since their own rule is already stricter), and the
+// random-element combat resolution (confirmed with the user via
+// AskUserQuestion — see issues/ANU-014.md Resolution). Exercised by directly
+// importing server/units.ts against a real in-memory SQLite connection (same
 // pattern as spec/perks.test.ts) rather than over the WebSocket protocol,
 // since neither an injectable RNG nor a lobby member's scrap balance has a
 // message shape to read it back through.
@@ -41,6 +42,26 @@ const ADJACENT_SAL_CODE = [...adjacency.get(SPAWN_SAL_CODE)!][0];
 const NON_ADJACENT_SAL_CODE = mapData.suburbs.find(
   (s) => s.sal_code !== SPAWN_SAL_CODE && !adjacency.get(SPAWN_SAL_CODE)!.has(s.sal_code),
 )!.sal_code;
+
+// BFS hop-distances from SPAWN_SAL_CODE, for ANU-047's drone 5-hop ceiling
+// tests below — a suburb at exactly the limit (still reachable) and one
+// just past it (rejected), both read from the real map rather than guessed.
+function bfsDistances(start: string): Map<string, number> {
+  const dist = new Map<string, number>([[start, 0]]);
+  const queue = [start];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const neighbour of adjacency.get(current) ?? []) {
+      if (dist.has(neighbour)) continue;
+      dist.set(neighbour, dist.get(current)! + 1);
+      queue.push(neighbour);
+    }
+  }
+  return dist;
+}
+const spawnDistances = bfsDistances(SPAWN_SAL_CODE);
+const AT_DRONE_LIMIT_SAL_CODE = [...spawnDistances.entries()].find(([, d]) => d === 5)![0];
+const BEYOND_DRONE_LIMIT_SAL_CODE = [...spawnDistances.entries()].find(([, d]) => d === 6)![0];
 
 function setup() {
   const store = openStore(":memory:");
@@ -94,6 +115,30 @@ it("a robot cannot move to a suburb with no road adjacency to anything it owns",
   if (!placed.ok) throw new Error("unreachable");
 
   const moved = units.moveUnit(lobbyId, owner, placed.unit.id, NON_ADJACENT_SAL_CODE);
+  expect(moved).toEqual({ ok: false, reason: "unreachable" });
+  store.close();
+});
+
+it("a drone can move exactly DRONE_MAX_HOPS (5) road-adjacency hops from owned territory", () => {
+  const { store, lobbyId, owner } = setup();
+  const units = createUnits(store.db);
+  const placed = units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "drone");
+  expect(placed.ok).toBe(true);
+  if (!placed.ok) throw new Error("unreachable");
+
+  const moved = units.moveUnit(lobbyId, owner, placed.unit.id, AT_DRONE_LIMIT_SAL_CODE);
+  expect(moved.ok).toBe(true);
+  store.close();
+});
+
+it("a drone cannot move beyond DRONE_MAX_HOPS (5) road-adjacency hops from owned territory", () => {
+  const { store, lobbyId, owner } = setup();
+  const units = createUnits(store.db);
+  const placed = units.placeUnit(lobbyId, owner, SPAWN_SAL_CODE, "drone");
+  expect(placed.ok).toBe(true);
+  if (!placed.ok) throw new Error("unreachable");
+
+  const moved = units.moveUnit(lobbyId, owner, placed.unit.id, BEYOND_DRONE_LIMIT_SAL_CODE);
   expect(moved).toEqual({ ok: false, reason: "unreachable" });
   store.close();
 });

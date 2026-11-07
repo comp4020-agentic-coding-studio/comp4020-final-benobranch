@@ -197,6 +197,44 @@ export function groundCanReachSuburb(ownedSalCodes, target) {
   return false;
 }
 
+/** Mirrors server/units.ts's DRONE_MAX_HOPS exactly (ANU-047). */
+const DRONE_MAX_HOPS = 5;
+
+/**
+ * Whether a drone owned by a player who owns `ownedSalCodes` could reach
+ * `target` from `origin` — within DRONE_MAX_HOPS road-adjacency hops of the
+ * NEAREST owned suburb OR of the drone's own origin (a multi-source BFS from
+ * the whole owned set plus origin), same rule as server/units.ts's
+ * flyCanReach — origin always counts as a source too, so a landless
+ * player's drone (placed via placeUnit's any-suburb loophole, ANU-014's
+ * Notes) can still fly from where it stands. A client courtesy only, same
+ * precedent as groundCanReachSuburb above — the server's own canReach stays
+ * authoritative.
+ * @param {ReadonlySet<string>} ownedSalCodes
+ * @param {string} origin
+ * @param {string} target
+ */
+export function droneCanReachSuburb(ownedSalCodes, origin, target) {
+  if (ownedSalCodes.has(target) || origin === target) return true;
+  const sources = new Set(ownedSalCodes);
+  sources.add(origin);
+  const visited = new Set(sources);
+  let frontier = [...sources];
+  for (let hop = 0; hop < DRONE_MAX_HOPS && frontier.length > 0; hop++) {
+    const next = [];
+    for (const sal of frontier) {
+      for (const n of adjacency.get(sal) ?? []) {
+        if (visited.has(n)) continue;
+        if (n === target) return true;
+        visited.add(n);
+        next.push(n);
+      }
+    }
+    frontier = next;
+  }
+  return false;
+}
+
 function cleanLabel(/** @type {string} */ name) {
   return name.replace(/ \(ACT\)$/, "").replace(/^ACT Remainder - (.+?)(?: \[part \d+\])?$/, "Wilderness: $1");
 }
