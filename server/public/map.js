@@ -33,6 +33,20 @@
 // and #map-factories): a dotted origin-to-destination line, progress mark
 // and archetype icon per in-transit unit group, replacing the grounded
 // marker renderUnits no longer draws for a unit mid-travel.
+//
+// ANU-050: data-center/base/factory markers all used to center on the exact
+// same suburb `label_point` the unit-stack marker does — since #map-units
+// paints last, a unit group fully covered whichever of the other three
+// shared its suburb. Reordering the `<g>` layers alone wouldn't have fixed
+// this (it only changes which marker wins the same dead-center pixel), so
+// each of those three now anchors into its own quadrant around label_point
+// instead (marker-offset.js's quadrantAnchor — data centers upper-left,
+// bases upper-right, factories lower-left), leaving all three mutually
+// non-overlapping. The unit-stack marker stays centered on label_point
+// (it already has its own left-to-right fan-out for same-suburb groups via
+// layoutUnitMarkers/UNIT_GROUP_GAP) and so still partially overlaps
+// whichever quadrant-anchored marker(s) share the suburb — by design, only
+// the one nearest corner of each, not their full footprint.
 import { unitVisual } from "./unit-visual.js";
 import { layoutUnitMarkers } from "./unit-marker-layout.js";
 import { layoutTransitArrows } from "./transit-visual.js";
@@ -42,6 +56,7 @@ import { DATA_CENTER_TIER_ICONS, DATA_CENTER_TIER_MARKER_SIZE } from "./data-cen
 import { UNIT_ARCHETYPE_ICONS, UNIT_MARKER_SIZE } from "./unit-icon.js";
 import { PLAYER_BASE_ICON, PLAYER_BASE_MARKER_SIZE } from "./base-icon.js";
 import { zoneVisual } from "./capture-visual.js";
+import { quadrantAnchor } from "./marker-offset.js";
 
 /**
  * @typedef {{idx: number, sal_code: string, name: string, is_remainder: boolean}} MapSuburb
@@ -289,8 +304,12 @@ function initOnce(data, geometry) {
     if (!suburb) continue; // a data center name that doesn't resolve to a suburb is a data bug, not something to render around
     const geo = sal_codeToGeo.get(suburb.sal_code);
     if (!geo) continue;
-    const [x, y] = geo.label_point;
     const size = DATA_CENTER_TIER_MARKER_SIZE[dc.tier];
+    // ANU-050: anchored into the upper-left quadrant of label_point rather
+    // than centered on it — see marker-offset.js for why this, not just a
+    // `<g>` reorder, is what actually keeps a data-center icon from being
+    // fully covered by a same-suburb base/factory/unit marker.
+    const [x, y] = quadrantAnchor(geo.label_point, size, -1, -1);
     const image = document.createElementNS("http://www.w3.org/2000/svg", "image");
     image.setAttribute("href", DATA_CENTER_TIER_ICONS[dc.tier]);
     image.setAttribute("x", String(x - size / 2));
@@ -401,7 +420,11 @@ export function renderBases(ownership, members) {
     if (ownership[member.spawnSalCode] !== member.playerId) continue; // base captured by someone else — no marker
     const geo = sal_codeToGeo.get(member.spawnSalCode);
     if (!geo) continue;
-    const [x, y] = geo.label_point;
+    // ANU-050: anchored into the upper-right quadrant — the opposite corner
+    // from the data-center marker's upper-left anchor (renderers above) —
+    // so a suburb holding both a data center and a player's base never has
+    // one marker's footprint fully inside the other's.
+    const [x, y] = quadrantAnchor(geo.label_point, size, 1, -1);
 
     const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
     group.setAttribute("class", "base-marker");
@@ -495,11 +518,17 @@ export function renderCapture(captures, ownership, members) {
       const [x, cy] = geo.label_point;
       const BAR_WIDTH = 900;
       const BAR_HEIGHT = 140;
-      // Sit the bar just under the unit/base icon centered on label_point
-      // (instead of across it), so the icon never draws over the bar.
-      const ICON_HALF = Math.max(UNIT_MARKER_SIZE, PLAYER_BASE_MARKER_SIZE) / 2;
+      // Sit the bar just under whichever marker extends furthest below
+      // label_point, so no marker ever draws over the bar. ANU-050 moved
+      // the data-center/base markers to anchor fully ABOVE label_point (they
+      // no longer extend downward at all), but the factory marker now
+      // anchors fully BELOW it (its full size, not half, since it's
+      // corner-anchored rather than centered) — only the still-centered
+      // unit-stack marker extends down by half its own size. The bar has to
+      // clear the larger of those two downward extents.
+      const BELOW_LABEL_POINT_CLEARANCE = Math.max(UNIT_MARKER_SIZE / 2, FACTORY_MARKER_SIZE);
       const BAR_GAP = 60;
-      const y = cy + ICON_HALF + BAR_GAP + BAR_HEIGHT / 2;
+      const y = cy + BELOW_LABEL_POINT_CLEARANCE + BAR_GAP + BAR_HEIGHT / 2;
       const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
       group.setAttribute("class", "capture-progress");
       const track = document.createElementNS("http://www.w3.org/2000/svg", "rect");
@@ -762,9 +791,15 @@ export function renderFactories(factoryList, members) {
     const geo = sal_codeToGeo.get(factory.sal_code);
     if (!geo) continue;
     const visual = factoryVisual(factory, colorByPlayerId.get(factory.ownerPlayerId) ?? "#888");
-    const [x, y] = geo.label_point;
-    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     const size = FACTORY_MARKER_SIZE;
+    // ANU-050: anchored into the lower-left quadrant — the one remaining
+    // corner from the data-center (upper-left) and base (upper-right)
+    // anchors above — so all three fixed-position marker types sharing a
+    // suburb stay non-overlapping with each other; the unit-stack marker
+    // (renderUnits) stays centered on label_point as before, since it
+    // already fans same-suburb groups out via layoutUnitMarkers.
+    const [x, y] = quadrantAnchor(geo.label_point, size, -1, 1);
+    const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     rect.setAttribute("x", String(x - size / 2));
     rect.setAttribute("y", String(y - size / 2));
     rect.setAttribute("width", String(size));
