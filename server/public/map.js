@@ -37,6 +37,7 @@ import { unitVisual } from "./unit-visual.js";
 import { layoutUnitMarkers } from "./unit-marker-layout.js";
 import { layoutTransitArrows } from "./transit-visual.js";
 import { factoryVisual } from "./factory-visual.js";
+import { FACTORY_ICON, FACTORY_MARKER_SIZE } from "./factory-icon.js";
 import { DATA_CENTER_TIER_ICONS, DATA_CENTER_TIER_MARKER_SIZE } from "./data-center-visual.js";
 import { UNIT_ARCHETYPE_ICONS, UNIT_MARKER_SIZE } from "./unit-icon.js";
 import { PLAYER_BASE_ICON, PLAYER_BASE_MARKER_SIZE } from "./base-icon.js";
@@ -725,7 +726,7 @@ export function renderFactories(factoryList, members) {
     const visual = factoryVisual(factory, colorByPlayerId.get(factory.ownerPlayerId) ?? "#888");
     const [x, y] = geo.label_point;
     const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    const size = 280;
+    const size = FACTORY_MARKER_SIZE;
     rect.setAttribute("x", String(x - size / 2));
     rect.setAttribute("y", String(y - size / 2));
     rect.setAttribute("width", String(size));
@@ -735,6 +736,21 @@ export function renderFactories(factoryList, members) {
     rect.dataset.factoryId = factory.id;
     rect.dataset.salCode = factory.sal_code;
     factoriesLayer.appendChild(rect);
+
+    // ANU-049: an icon layered on the backdrop, same convention renderUnits
+    // follows for unit markers — ownership stays conveyed by the backdrop
+    // color, not the icon (which is a fixed "glitch" glyph).
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "image");
+    icon.setAttribute("href", FACTORY_ICON);
+    icon.setAttribute("x", String(x - size / 2));
+    icon.setAttribute("y", String(y - size / 2));
+    icon.setAttribute("width", String(size));
+    icon.setAttribute("height", String(size));
+    icon.setAttribute("image-rendering", "pixelated");
+    icon.setAttribute("class", "factory-marker__icon");
+    icon.dataset.factoryId = factory.id;
+    icon.dataset.salCode = factory.sal_code;
+    factoriesLayer.appendChild(icon);
   }
 }
 
