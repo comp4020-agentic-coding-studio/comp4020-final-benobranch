@@ -235,6 +235,50 @@ function groundCanReach(ownedSalCodes: ReadonlySet<string>, target: string): boo
   return false;
 }
 
+/**
+ * A drone's flight ceiling (ANU-047, "too OP" unlimited range): the issue's
+ * done-when calls for 5 road-adjacency hops, not a distance/time bound —
+ * independent of `speed`/`DRONE_SPEED` above, which only governs how long a
+ * flight takes, not how far one may go.
+ */
+export const DRONE_MAX_HOPS = 5;
+
+/**
+ * A "fly" (drone) unit may reach any suburb within DRONE_MAX_HOPS
+ * road-adjacency hops of the NEAREST suburb the player owns, OR of the
+ * drone's own current suburb — a multi-source BFS from the whole owned set
+ * plus origin, not just the drone's own origin alone, per issues/ANU-047.md's
+ * Notes: a drone near a far-flung owned outpost gets its ceiling measured
+ * from there too, not just the player's main cluster. The origin always
+ * counts as a source too (same "owned-but-stranded suburb stays reachable by
+ * its own occupant" precedent groundCanReach already sets for owned
+ * territory) so a landless player's drone — e.g. one placed via placeUnit's
+ * any-suburb loophole (ANU-014's Notes) without the player owning anything —
+ * can still fly, rather than being stranded by an empty owned set. Still
+ * ignores corridor/ownership along the way (ANU-014's "ignore adjacency
+ * entirely" fluff) below that ceiling — this only bounds distance.
+ */
+function flyCanReach(ownedSalCodes: ReadonlySet<string>, origin: string, target: string): boolean {
+  if (ownedSalCodes.has(target) || origin === target) return true;
+  const sources = new Set(ownedSalCodes);
+  sources.add(origin);
+  const visited = new Set(sources);
+  let frontier = [...sources];
+  for (let hop = 0; hop < DRONE_MAX_HOPS && frontier.length > 0; hop++) {
+    const next: string[] = [];
+    for (const sal of frontier) {
+      for (const n of adjacency.get(sal) ?? []) {
+        if (visited.has(n)) continue;
+        if (n === target) return true;
+        visited.add(n);
+        next.push(n);
+      }
+    }
+    frontier = next;
+  }
+  return false;
+}
+
 export function createUnits(db: DatabaseSync, rng: () => number = Math.random): Units {
   const perks = createPerkHook(db);
 
@@ -329,9 +373,20 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
     return new Set((selectOwnedSalCodes.all(lobbyId, playerId) as { salCode: string }[]).map((r) => r.salCode));
   }
 
-  /** The reachability half of both moveUnit and attackSuburb — identical rule for both per issues/ANU-014.md. */
-  function canReach(lobbyId: string, ownerPlayerId: string, unitType: UnitTypeRow, target: string): boolean {
-    if (unitType.movement_mode === "fly") return true; // drones ignore adjacency/corridor entirely
+  /**
+   * The reachability half of both moveUnit and attackSuburb — identical rule
+   * for both per issues/ANU-014.md. `origin` (ANU-047) is the moving unit's
+   * own current suburb — only a drone's flyCanReach uses it (as a fallback
+   * BFS source alongside owned territory); groundCanReach never needed an
+   * origin since a robot's rule was always "owned, or adjacent to owned"
+   * regardless of where the moving unit itself started.
+   */
+  function canReach(lobbyId: string, ownerPlayerId: string, unitType: UnitTypeRow, origin: string, target: string): boolean {
+    // Drones still ignore adjacency/corridor entirely (ANU-014) but are
+    // capped to DRONE_MAX_HOPS from owned territory (ANU-047) — unlike a
+    // robot's groundCanReach, which cares about owned/adjacent at every
+    // single hop, a drone only cares about the hop COUNT to its target.
+    if (unitType.movement_mode === "fly") return flyCanReach(ownedSalCodes(lobbyId, ownerPlayerId), origin, target);
     return groundCanReach(ownedSalCodes(lobbyId, ownerPlayerId), target);
   }
 
@@ -421,7 +476,7 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
     if (row.ownerPlayerId !== ownerPlayerId) return { ok: false, reason: "not-owner" };
 
     const attackerType = selectUnitType.get(row.unitTypeKey) as unknown as UnitTypeRow;
-    if (!canReach(lobbyId, ownerPlayerId, attackerType, salCode)) return { ok: false, reason: "unreachable" };
+    if (!canReach(lobbyId, ownerPlayerId, attackerType, row.salCode, salCode)) return { ok: false, reason: "unreachable" };
 
     return { ok: true, ...resolveCombatAt(lobbyId, ownerPlayerId, row, salCode) };
   }
@@ -451,7 +506,7 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
       if (row.ownerPlayerId !== ownerPlayerId) return { ok: false, reason: "not-owner" };
 
       const unitType = selectUnitType.get(row.unitTypeKey) as unknown as UnitTypeRow;
-      if (!canReach(lobbyId, ownerPlayerId, unitType, salCode)) return { ok: false, reason: "unreachable" };
+      if (!canReach(lobbyId, ownerPlayerId, unitType, row.salCode, salCode)) return { ok: false, reason: "unreachable" };
 
       const occupants = selectOccupantsAt.all(lobbyId, salCode) as unknown as OccupantRow[];
       const enemyPresent = occupants.some((o) => o.id !== unitId && o.ownerPlayerId !== ownerPlayerId);
@@ -482,7 +537,7 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
 
         const unitType = selectUnitType.get(unitTypeKey) as UnitTypeRow | undefined;
         if (!unitType) return { ok: false, reason: "unknown-unit-type" };
-        if (!canReach(lobbyId, ownerPlayerId, unitType, toSalCode)) return { ok: false, reason: "unreachable" };
+        if (!canReach(lobbyId, ownerPlayerId, unitType, fromSalCode, toSalCode)) return { ok: false, reason: "unreachable" };
 
         const available = selectOwnedUnitsOfTypeAt.all(lobbyId, fromSalCode, ownerPlayerId, unitTypeKey) as unknown as OccupantRow[];
         if (available.length < count) return { ok: false, reason: "insufficient-units" };
