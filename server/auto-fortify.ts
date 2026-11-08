@@ -12,7 +12,7 @@
 import type { Territory } from "./territory.ts";
 import type { AutoFortifyMode } from "./store.ts";
 import type { Units } from "./units.ts";
-import { adjacentSalCodes } from "./units.ts";
+import { adjacentSalCodes, EMP_UNIT_TYPE_KEY } from "./units.ts";
 
 /**
  * A territory counts as "surplus" for a given unit type once it holds more
@@ -169,6 +169,15 @@ export function createAutoFortify(
       const inTransitToByType = new Map<string, Map<string, number>>();
 
       for (const unit of occupancy) {
+        // ANU-051: an idle EMP ([[ANU-048]]) is never auto-fortify surplus,
+        // regardless of how many pile up at one territory — its arrival
+        // ALWAYS detonates (bypasses combat entirely, blacks out the
+        // destination's factories/data centers) no matter who owns it, so
+        // auto-dispatching one to the player's own under-stocked territory
+        // would be a self-inflicted blackout. Every other unit type (an
+        // ordinary combatant whose arrival just occupies/fights) keeps
+        // being evaluated completely normally.
+        if (unit.unitTypeKey === EMP_UNIT_TYPE_KEY) continue;
         if (unit.destinationSalCode) {
           if (!ownedSalCodeSet.has(unit.destinationSalCode)) continue; // mid-attack on a non-owned suburb — not fortify-relevant
           const bySalCode = inTransitToByType.get(unit.unitTypeKey) ?? new Map<string, number>();
