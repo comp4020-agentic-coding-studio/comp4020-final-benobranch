@@ -37,6 +37,7 @@ import { unitVisual } from "./unit-visual.js";
 import { layoutUnitMarkers } from "./unit-marker-layout.js";
 import { layoutTransitArrows } from "./transit-visual.js";
 import { factoryVisual } from "./factory-visual.js";
+import { FACTORY_ICON, FACTORY_MARKER_SIZE } from "./factory-icon.js";
 import { DATA_CENTER_TIER_ICONS, DATA_CENTER_TIER_MARKER_SIZE } from "./data-center-visual.js";
 import { UNIT_ARCHETYPE_ICONS, UNIT_MARKER_SIZE } from "./unit-icon.js";
 import { PLAYER_BASE_ICON, PLAYER_BASE_MARKER_SIZE } from "./base-icon.js";
@@ -197,6 +198,44 @@ export function groundCanReachSuburb(ownedSalCodes, target) {
   if (!neighbours) return false;
   for (const n of neighbours) {
     if (ownedSalCodes.has(n)) return true;
+  }
+  return false;
+}
+
+/** Mirrors server/units.ts's DRONE_MAX_HOPS exactly (ANU-047). */
+const DRONE_MAX_HOPS = 5;
+
+/**
+ * Whether a drone owned by a player who owns `ownedSalCodes` could reach
+ * `target` from `origin` — within DRONE_MAX_HOPS road-adjacency hops of the
+ * NEAREST owned suburb OR of the drone's own origin (a multi-source BFS from
+ * the whole owned set plus origin), same rule as server/units.ts's
+ * flyCanReach — origin always counts as a source too, so a landless
+ * player's drone (placed via placeUnit's any-suburb loophole, ANU-014's
+ * Notes) can still fly from where it stands. A client courtesy only, same
+ * precedent as groundCanReachSuburb above — the server's own canReach stays
+ * authoritative.
+ * @param {ReadonlySet<string>} ownedSalCodes
+ * @param {string} origin
+ * @param {string} target
+ */
+export function droneCanReachSuburb(ownedSalCodes, origin, target) {
+  if (ownedSalCodes.has(target) || origin === target) return true;
+  const sources = new Set(ownedSalCodes);
+  sources.add(origin);
+  const visited = new Set(sources);
+  let frontier = [...sources];
+  for (let hop = 0; hop < DRONE_MAX_HOPS && frontier.length > 0; hop++) {
+    const next = [];
+    for (const sal of frontier) {
+      for (const n of adjacency.get(sal) ?? []) {
+        if (visited.has(n)) continue;
+        if (n === target) return true;
+        visited.add(n);
+        next.push(n);
+      }
+    }
+    frontier = next;
   }
   return false;
 }
@@ -804,7 +843,7 @@ export function renderFactories(factoryList, members) {
     const visual = factoryVisual(factory, colorByPlayerId.get(factory.ownerPlayerId) ?? "#888");
     const [x, y] = geo.label_point;
     const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    const size = 280;
+    const size = FACTORY_MARKER_SIZE;
     rect.setAttribute("x", String(x - size / 2));
     rect.setAttribute("y", String(y - size / 2));
     rect.setAttribute("width", String(size));
@@ -814,6 +853,21 @@ export function renderFactories(factoryList, members) {
     rect.dataset.factoryId = factory.id;
     rect.dataset.salCode = factory.sal_code;
     factoriesLayer.appendChild(rect);
+
+    // ANU-049: an icon layered on the backdrop, same convention renderUnits
+    // follows for unit markers — ownership stays conveyed by the backdrop
+    // color, not the icon (which is a fixed "glitch" glyph).
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "image");
+    icon.setAttribute("href", FACTORY_ICON);
+    icon.setAttribute("x", String(x - size / 2));
+    icon.setAttribute("y", String(y - size / 2));
+    icon.setAttribute("width", String(size));
+    icon.setAttribute("height", String(size));
+    icon.setAttribute("image-rendering", "pixelated");
+    icon.setAttribute("class", "factory-marker__icon");
+    icon.dataset.factoryId = factory.id;
+    icon.dataset.salCode = factory.sal_code;
+    factoriesLayer.appendChild(icon);
   }
 }
 

@@ -35,7 +35,14 @@ export type AttackOutcome =
   // Target held no enemy unit ("undefended" — see Notes in issues/ANU-014.md
   // for the exact definition) — the attack completes as a plain move.
   | { outcome: "moved"; unit: OccupantUnit }
-  // Defender survived the hit; attacker stays put, both units remain.
+  // Defender survived the hit: the attacker still advances into `salCode`
+  // (ANU-043) — both units now occupy it together, contested, neither
+  // destroyed. Pre-ANU-043 this left the attacker at its ORIGIN instead,
+  // which was invisible back when combat resolved synchronously at dispatch
+  // (nothing had moved yet to visibly un-move) but became a visible
+  // teleport-back-to-source the moment ANU-038 added real travel: a unit
+  // would fly all the way to the destination and then snap home on a
+  // non-killing hit. See issues/ANU-043.md's Resolution.
   | { outcome: "hit"; attacker: OccupantUnit; defender: OccupantUnit; damageDealt: number }
   // Defender's health reached 0: it's destroyed, the attacker credits
   // scrap (scaled by the scrapPerKillMultiplier perk hook) and advances
@@ -102,6 +109,42 @@ export interface Units {
    * resolved just before it (issues/ANU-038.md's Notes).
    */
   settleArrivals(lobbyId: string): AttackOutcome[];
+  /**
+   * ANU-044: resolves ongoing combat between enemy garrisons that are
+   * simply standing in the same suburb already — not freshly arriving.
+   * Before this, `resolveCombatAt` only ever ran once, at the instant a
+   * unit's travel time elapsed (`settleArrivals` above) or via the dead
+   * `attackSuburb` primitive; two enemy garrisons that both resolved their
+   * arrivals and were then simply co-located (no one "arriving" anymore)
+   * never fought again, no matter how long they stood there — the bug
+   * report's "they never fight each other" is this literally, not a
+   * figure of speech. territory.ts's `settleSuburb` (ANU-017) correctly
+   * freezes CAPTURE PROGRESS while 2+ distinct owners are present
+   * (contested), but was never meant to resolve unit-vs-unit combat
+   * itself — that responsibility stayed here, in units.ts, and this is
+   * the missing piece.
+   *
+   * One exchange per suburb per call: for every suburb where 2+ distinct
+   * owners currently have stationary (non-transit) units, the
+   * longest-present occupant overall (spawned_at-then-id order, same
+   * tie-break `selectOccupantsAt`/`selectOwnedUnitsOfTypeAt` already use)
+   * fights via the existing single-defender `resolveCombatAt` (attacking
+   * whichever ENEMY occupant has been there longest) — not an all-out
+   * melee, so a stand-off plays out as a continuing trade of hits across
+   * ticks rather than instantly wiping a garrison in one pass, matching
+   * how `settleArrivals`/`attackSuburb` already resolve one hit at a time.
+   * This also naturally covers "an owner's defending garrison vs. a single
+   * invader standing in their territory" (two distinct owners physically
+   * present, even though territory.ts only counts the invader as a
+   * "capturer" since the owner's own units are never a capturer/contester
+   * of their own zone) — the defenders should not sit idle while a
+   * capture ticks up against them, and now they don't.
+   *
+   * Called at the same cadence/call-sites as `settleArrivals` — before
+   * every occupancy-driven broadcast and from the ~1s `arrivalTicker` (see
+   * server/index.ts) — never an armed per-suburb timer (ADR 0001).
+   */
+  settleGarrisonCombat(lobbyId: string): AttackOutcome[];
   getOccupancy(lobbyId: string): OccupantUnit[];
 }
 
@@ -280,18 +323,74 @@ function buildAdjacency(): Map<string, Set<string>> {
 const adjacency = buildAdjacency();
 
 /**
+ * Every map-adjacent sal_code for a given suburb (empty set for one with no
+ * edges) — exported for server/auto-fortify.ts's border/landlocked
+ * classification (ANU-042), which needs the raw neighbour set itself, not
+ * just the owned-or-adjacent-to-owned boolean groundCanReach below computes.
+ * Reuses this module's own adjacency map rather than re-deriving it from
+ * map-geometry.json/map.json a second time.
+ */
+export function adjacentSalCodes(salCode: string): ReadonlySet<string> {
+  return adjacency.get(salCode) ?? new Set();
+}
+
+/**
  * A "ground" (robot) unit may reach a suburb it already owns, or one
  * road-adjacent to a suburb it owns — owned-but-not-yet-adjacent-to-
  * anything-else suburbs (e.g. an isolated spawn) must stay reachable by
  * their own owner, so "owned" alone has to count, not just "neighbour of
  * owned".
  */
-function groundCanReach(ownedSalCodes: ReadonlySet<string>, target: string): boolean {
+export function groundCanReach(ownedSalCodes: ReadonlySet<string>, target: string): boolean {
   if (ownedSalCodes.has(target)) return true;
   const neighbours = adjacency.get(target);
   if (!neighbours) return false;
   for (const n of neighbours) {
     if (ownedSalCodes.has(n)) return true;
+  }
+  return false;
+}
+
+/**
+ * A drone's flight ceiling (ANU-047, "too OP" unlimited range): the issue's
+ * done-when calls for 5 road-adjacency hops, not a distance/time bound —
+ * independent of `speed`/`DRONE_SPEED` above, which only governs how long a
+ * flight takes, not how far one may go.
+ */
+export const DRONE_MAX_HOPS = 5;
+
+/**
+ * A "fly" (drone) unit may reach any suburb within DRONE_MAX_HOPS
+ * road-adjacency hops of the NEAREST suburb the player owns, OR of the
+ * drone's own current suburb — a multi-source BFS from the whole owned set
+ * plus origin, not just the drone's own origin alone, per issues/ANU-047.md's
+ * Notes: a drone near a far-flung owned outpost gets its ceiling measured
+ * from there too, not just the player's main cluster. The origin always
+ * counts as a source too (same "owned-but-stranded suburb stays reachable by
+ * its own occupant" precedent groundCanReach already sets for owned
+ * territory) so a landless player's drone — e.g. one placed via placeUnit's
+ * any-suburb loophole (ANU-014's Notes) without the player owning anything —
+ * can still fly, rather than being stranded by an empty owned set. Still
+ * ignores corridor/ownership along the way (ANU-014's "ignore adjacency
+ * entirely" fluff) below that ceiling — this only bounds distance.
+ */
+function flyCanReach(ownedSalCodes: ReadonlySet<string>, origin: string, target: string): boolean {
+  if (ownedSalCodes.has(target) || origin === target) return true;
+  const sources = new Set(ownedSalCodes);
+  sources.add(origin);
+  const visited = new Set(sources);
+  let frontier = [...sources];
+  for (let hop = 0; hop < DRONE_MAX_HOPS && frontier.length > 0; hop++) {
+    const next: string[] = [];
+    for (const sal of frontier) {
+      for (const n of adjacency.get(sal) ?? []) {
+        if (visited.has(n)) continue;
+        if (n === target) return true;
+        visited.add(n);
+        next.push(n);
+      }
+    }
+    frontier = next;
   }
   return false;
 }
@@ -309,12 +408,12 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
   const selectUnit = db.prepare(
     "SELECT id, owner_player_id AS ownerPlayerId, sal_code AS salCode, unit_type_key AS unitTypeKey, health FROM units WHERE id = ? AND lobby_id = ?",
   );
-  // ANU-038: a completed arrival ("moved"/"kill") both relocates the unit
-  // AND clears its transit stamps in one statement — a "hit" outcome
-  // (stayPut below) clears the stamps without touching sal_code, since the
-  // attacker stays put at its ORIGIN, not the contested destination.
+  // A completed arrival relocates the unit AND clears its transit stamps in
+  // one statement, for every AttackOutcome ("moved", "hit", "kill" — ANU-043:
+  // a "hit" that doesn't kill the defender still advances the attacker into
+  // `salCode`, same as the other two outcomes, so this single statement
+  // covers all of resolveCombatAt's relocating paths).
   const arriveUnit = db.prepare("UPDATE units SET sal_code = ?, destination_sal_code = NULL, move_started_at = NULL WHERE id = ?");
-  const stayPut = db.prepare("UPDATE units SET destination_sal_code = NULL, move_started_at = NULL WHERE id = ?");
   const updateUnitHealth = db.prepare("UPDATE units SET health = ? WHERE id = ?");
   const deleteUnit = db.prepare("DELETE FROM units WHERE id = ?");
   // ANU-048: writes/refreshes an EMP blackout on arrival — same upsert shape
@@ -346,6 +445,24 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
     SELECT id, owner_player_id AS ownerPlayerId, sal_code AS salCode, unit_type_key AS unitTypeKey, health, spawned_at AS spawnedAt
     FROM units WHERE lobby_id = ? AND sal_code = ? AND destination_sal_code IS NULL
     ORDER BY spawned_at, id
+  `);
+  // ANU-044: lobby-wide stationary (non-transit) occupancy, grouped by
+  // sal_code purely to find which suburbs currently have 2+ DISTINCT
+  // owners physically present at once — the condition under which
+  // settleGarrisonCombat below needs to act — and, via MIN(spawned_at),
+  // which owner has been there longest (deterministic turn order, same
+  // shape as territory.ts's selectOccupancyGroups). Deliberately NOT
+  // filtered against suburb_ownership the way territory.ts's "capturers"
+  // are (it excludes only the suburb's registered owner) — this is about
+  // physical presence of enemy units full stop, which is also what makes
+  // an owner's own defending garrison fight back against a lone invader
+  // (two distinct owners physically present, even though territory.ts
+  // never counts the defending owner as a "capturer" of their own zone).
+  const selectStationaryOccupancyGroups = db.prepare(`
+    SELECT sal_code AS salCode, owner_player_id AS ownerPlayerId, MIN(spawned_at) AS earliestSpawnedAt
+    FROM units WHERE lobby_id = ? AND destination_sal_code IS NULL
+    GROUP BY sal_code, owner_player_id
+    ORDER BY sal_code, earliestSpawnedAt, owner_player_id
   `);
   const selectOwnedSalCodes = db.prepare(
     "SELECT sal_code AS salCode FROM suburb_ownership WHERE lobby_id = ? AND owner_player_id = ?",
@@ -403,9 +520,20 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
     return new Set((selectOwnedSalCodes.all(lobbyId, playerId) as { salCode: string }[]).map((r) => r.salCode));
   }
 
-  /** The reachability half of both moveUnit and attackSuburb — identical rule for both per issues/ANU-014.md. */
-  function canReach(lobbyId: string, ownerPlayerId: string, unitType: UnitTypeRow, target: string): boolean {
-    if (unitType.movement_mode === "fly") return true; // drones ignore adjacency/corridor entirely
+  /**
+   * The reachability half of both moveUnit and attackSuburb — identical rule
+   * for both per issues/ANU-014.md. `origin` (ANU-047) is the moving unit's
+   * own current suburb — only a drone's flyCanReach uses it (as a fallback
+   * BFS source alongside owned territory); groundCanReach never needed an
+   * origin since a robot's rule was always "owned, or adjacent to owned"
+   * regardless of where the moving unit itself started.
+   */
+  function canReach(lobbyId: string, ownerPlayerId: string, unitType: UnitTypeRow, origin: string, target: string): boolean {
+    // Drones still ignore adjacency/corridor entirely (ANU-014) but are
+    // capped to DRONE_MAX_HOPS from owned territory (ANU-047) — unlike a
+    // robot's groundCanReach, which cares about owned/adjacent at every
+    // single hop, a drone only cares about the hop COUNT to its target.
+    if (unitType.movement_mode === "fly") return flyCanReach(ownedSalCodes(lobbyId, ownerPlayerId), origin, target);
     return groundCanReach(ownedSalCodes(lobbyId, ownerPlayerId), target);
   }
 
@@ -454,15 +582,19 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
 
     if (remainingHealth > 0) {
       updateUnitHealth.run(remainingHealth, defender.id);
-      // The attacker stays at its ORIGIN, not the contested destination —
-      // for the instant `attackSuburb` primitive that's already `row`'s
-      // sal_code, a no-op; for an arriving unit (settleArrivals below) this
-      // also clears its now-finished transit stamps, same as a "moved"/
-      // "kill" arrival, just without relocating it.
-      stayPut.run(row.id);
+      // ANU-043: the attacker still advances into `salCode`, same as a
+      // "moved"/"kill" outcome — a hit that doesn't kill the defender
+      // leaves both units occupying the destination, contested, rather
+      // than snapping the attacker back to its origin. For the instant
+      // `attackSuburb` primitive salCode usually already IS `row`'s
+      // sal_code (a no-op repositioning); for an arriving unit
+      // (settleArrivals below) this is what stops a unit that traveled
+      // all the way to a defended destination and survived combat from
+      // visibly teleporting back home the instant it arrives.
+      arriveUnit.run(salCode, row.id);
       return {
         outcome: "hit",
-        attacker: toOccupant(settled),
+        attacker: toOccupant({ ...settled, salCode }),
         defender: toOccupant({ ...defender, health: remainingHealth }),
         damageDealt,
       };
@@ -495,7 +627,7 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
     if (row.ownerPlayerId !== ownerPlayerId) return { ok: false, reason: "not-owner" };
 
     const attackerType = selectUnitType.get(row.unitTypeKey) as unknown as UnitTypeRow;
-    if (!canReach(lobbyId, ownerPlayerId, attackerType, salCode)) return { ok: false, reason: "unreachable" };
+    if (!canReach(lobbyId, ownerPlayerId, attackerType, row.salCode, salCode)) return { ok: false, reason: "unreachable" };
 
     return { ok: true, ...resolveCombatAt(lobbyId, ownerPlayerId, row, salCode) };
   }
@@ -525,7 +657,7 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
       if (row.ownerPlayerId !== ownerPlayerId) return { ok: false, reason: "not-owner" };
 
       const unitType = selectUnitType.get(row.unitTypeKey) as unknown as UnitTypeRow;
-      if (!canReach(lobbyId, ownerPlayerId, unitType, salCode)) return { ok: false, reason: "unreachable" };
+      if (!canReach(lobbyId, ownerPlayerId, unitType, row.salCode, salCode)) return { ok: false, reason: "unreachable" };
 
       const occupants = selectOccupantsAt.all(lobbyId, salCode) as unknown as OccupantRow[];
       const enemyPresent = occupants.some((o) => o.id !== unitId && o.ownerPlayerId !== ownerPlayerId);
@@ -556,7 +688,7 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
 
         const unitType = selectUnitType.get(unitTypeKey) as UnitTypeRow | undefined;
         if (!unitType) return { ok: false, reason: "unknown-unit-type" };
-        if (!canReach(lobbyId, ownerPlayerId, unitType, toSalCode)) return { ok: false, reason: "unreachable" };
+        if (!canReach(lobbyId, ownerPlayerId, unitType, fromSalCode, toSalCode)) return { ok: false, reason: "unreachable" };
 
         const available = selectOwnedUnitsOfTypeAt.all(lobbyId, fromSalCode, ownerPlayerId, unitTypeKey) as unknown as OccupantRow[];
         if (available.length < count) return { ok: false, reason: "insufficient-units" };
@@ -609,6 +741,43 @@ export function createUnits(db: DatabaseSync, rng: () => number = Math.random): 
         // was already checked once at dispatch time and must not be
         // re-checked here (see resolveCombatAt's docstring).
         outcomes.push(resolveCombatAt(lobbyId, unit.ownerPlayerId, unit, unit.destinationSalCode));
+      }
+      return outcomes;
+    },
+
+    settleGarrisonCombat(lobbyId) {
+      const groups = selectStationaryOccupancyGroups.all(lobbyId) as unknown as {
+        salCode: string;
+        ownerPlayerId: string;
+        earliestSpawnedAt: string;
+      }[];
+      const ownersBySalCode = new Map<string, string[]>();
+      for (const g of groups) {
+        if (!ownersBySalCode.has(g.salCode)) ownersBySalCode.set(g.salCode, []);
+        ownersBySalCode.get(g.salCode)!.push(g.ownerPlayerId);
+      }
+
+      const outcomes: AttackOutcome[] = [];
+      for (const [salCode, owners] of ownersBySalCode) {
+        if (owners.length < 2) continue; // only one owner present here -- nothing to fight; territory.ts's uncontested accrual covers this case
+        // One exchange per owner CURRENTLY present this tick, in the
+        // deterministic longest-present-first order the query above already
+        // returns -- a "round" where everyone standing in the suburb gets
+        // one attack against the longest-present enemy (resolveCombatAt's
+        // own defender choice), not just whichever owner got here first
+        // historically. Live occupancy is re-read before every owner's
+        // turn (not just once at the top) since an earlier attack THIS SAME
+        // round can kill a defender down to the last owner standing (break)
+        // or remove an owner's only representative unit (continue) before
+        // their turn comes up.
+        for (const ownerPlayerId of owners) {
+          const liveOccupants = selectOccupantsAt.all(lobbyId, salCode) as unknown as OccupantRow[];
+          const distinctOwnersNow = new Set(liveOccupants.map((o) => o.ownerPlayerId));
+          if (distinctOwnersNow.size < 2) break; // the contest already resolved mid-round -- nobody left to fight
+          const attackerUnit = liveOccupants.find((o) => o.ownerPlayerId === ownerPlayerId);
+          if (!attackerUnit) continue; // this owner's representative was destroyed earlier this round
+          outcomes.push(resolveCombatAt(lobbyId, ownerPlayerId, attackerUnit, salCode));
+        }
       }
       return outcomes;
     },

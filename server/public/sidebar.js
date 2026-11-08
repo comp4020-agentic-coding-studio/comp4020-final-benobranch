@@ -33,7 +33,7 @@
 import { suburbDetailViewModel, unitsByZone } from "./suburb-detail-view.js";
 import { skillTreeVisual } from "./skill-tree-visual.js";
 import { SKILL_NODES } from "./skill-tree-nodes.js";
-import { groundCanReachSuburb, suburbName } from "./map.js";
+import { droneCanReachSuburb, groundCanReachSuburb, suburbName } from "./map.js";
 export { suburbDetailViewModel };
 
 /**
@@ -46,6 +46,7 @@ export { suburbDetailViewModel };
  * @property {{scrap: number}} economy
  * @property {SkillTreeState | null} skillTree - null until the first
  *   `skillTree` message arrives.
+ * @property {import("../protocol.ts").AutoFortifyMode} autoFortifyMode - ANU-042, carried on `economy`.
  */
 
 /**
@@ -74,6 +75,7 @@ const panels = {
 };
 const suburbDetailEl = /** @type {HTMLElement} */ (document.getElementById("suburb-detail"));
 const unitListEl = /** @type {HTMLElement} */ (document.getElementById("unit-list"));
+const autoFortifyOptionsEl = /** @type {HTMLElement} */ (document.getElementById("auto-fortify-options"));
 const factoryListEl = /** @type {HTMLElement} */ (document.getElementById("factory-list"));
 const skillTreeListEl = /** @type {HTMLElement} */ (document.getElementById("skill-tree-list"));
 const skillTreeTflopsEl = /** @type {HTMLElement} */ (document.getElementById("skill-tree-tflops"));
@@ -106,11 +108,12 @@ let errorTimer;
  * source suburb — the map's next suburb tap (selectFromMap) is captured as
  * the destination instead of updating the Territory detail panel (ANU-027).
  * `counts` holds the player's current per-type quantity picks, clamped to
- * `movableUnitGroups`' per-type cap; `robotsUnreachable` is set once a
- * destination has actually been picked and found unreachable for ground
- * units, which greys the robot row and keeps the panel open rather than
- * sending immediately.
- * @type {{ fromSalCode: string, counts: Record<string, number>, robotsUnreachable: boolean, toSalCode?: string } | null}
+ * `movableUnitGroups`' per-type cap; `robotsUnreachable`/`dronesUnreachable`
+ * (ANU-047: a drone also has a reach limit now, just a far more generous one
+ * than a robot's) are set once a destination has actually been picked and
+ * found unreachable for that archetype, which greys that row and keeps the
+ * panel open rather than sending immediately.
+ * @type {{ fromSalCode: string, counts: Record<string, number>, robotsUnreachable: boolean, dronesUnreachable: boolean, toSalCode?: string } | null}
  */
 let pendingMove = null;
 
@@ -157,10 +160,11 @@ function buildProductionDisplay(production) {
 /**
  * The ANU-027 "Move units" quantity panel for `fromSalCode`: one row per
  * entry in `movableUnitGroups`, a number input plus -10/-5/+5/+10 steppers,
- * each clamped to [0, that type's count]. `pendingMove.robotsUnreachable`
- * (set once a destination has been picked and found unreachable for ground
- * units) disables the robot row and forces its count to 0, per
- * issues/ANU-027.md's "after destination click" rule.
+ * each clamped to [0, that type's count]. `pendingMove.robotsUnreachable`/
+ * `dronesUnreachable` (set once a destination has been picked and found
+ * unreachable for that archetype) disables that row and forces its count to
+ * 0, per issues/ANU-027.md's "after destination click" rule (ANU-047 adds
+ * the drone case, since a drone can now fail to reach too).
  * @param {import("./suburb-detail-view.js").MovableUnitGroup[]} movableUnitGroups
  */
 function buildMovePanel(movableUnitGroups) {
@@ -170,7 +174,9 @@ function buildMovePanel(movableUnitGroups) {
   for (const group of movableUnitGroups) {
     const row = document.createElement("div");
     row.className = "move-panel__row";
-    const disabled = group.unitTypeKey === "robot" && pendingMove?.robotsUnreachable === true;
+    const disabled =
+      (group.unitTypeKey === "robot" && pendingMove?.robotsUnreachable === true) ||
+      (group.unitTypeKey === "drone" && pendingMove?.dronesUnreachable === true);
     if (disabled && pendingMove) pendingMove.counts[group.unitTypeKey] = 0;
     const current = pendingMove?.counts[group.unitTypeKey] ?? 0;
 
@@ -219,11 +225,11 @@ function buildMovePanel(movableUnitGroups) {
     wrap.appendChild(row);
   }
 
-  if (pendingMove?.robotsUnreachable && pendingMove.toSalCode) {
-    // Robots were greyed out by the destination just picked — the player
-    // adjusts drone-only counts here, then confirms explicitly rather than
-    // re-tapping the map (issues/ANU-027.md: "the panel stays open ... to
-    // confirm drone-only counts or cancel").
+  if ((pendingMove?.robotsUnreachable || pendingMove?.dronesUnreachable) && pendingMove.toSalCode) {
+    // One archetype (or both, ANU-047) was greyed out by the destination
+    // just picked — the player adjusts the remaining counts here, then
+    // confirms explicitly rather than re-tapping the map (issues/ANU-027.md:
+    // "the panel stays open ... to confirm drone-only counts or cancel").
     const toSalCode = pendingMove.toSalCode;
     const send_ = document.createElement("button");
     send_.type = "button";
@@ -270,10 +276,10 @@ function confirmAndSendPendingMove(toSalCode) {
 /**
  * Fired when a suburb is tapped on the map while the "Move units" panel is
  * open (ANU-027) — the destination for `pendingMove`'s source/counts.
- * Greys the robot row (and re-renders the still-open panel) the first time
- * an unreachable-for-ground destination is picked, rather than sending
- * immediately; a reachable destination (or a drone-only order against an
- * unreachable one) sends right away, with a confirm prompt first if the
+ * Greys the robot and/or drone row (and re-renders the still-open panel,
+ * ANU-047 adds the drone case) the first time an unreachable-for-that-
+ * archetype destination is picked, rather than sending immediately; a fully
+ * reachable order sends right away, with a confirm prompt first if the
  * destination isn't the player's own.
  * @param {string} toSalCode
  */
@@ -283,9 +289,12 @@ function handleMoveDestinationPick(toSalCode) {
   const owned = new Set(Object.entries(lobby.ownership).filter(([, owner]) => owner === myPlayerId).map(([sal]) => sal));
   const robotCount = pendingMove.counts.robot ?? 0;
   const robotsCanReach = owned.has(toSalCode) || groundCanReachSuburb(owned, toSalCode);
+  const droneCount = pendingMove.counts.drone ?? 0;
+  const dronesCanReach = owned.has(toSalCode) || droneCanReachSuburb(owned, pendingMove.fromSalCode, toSalCode);
 
-  if (robotCount > 0 && !robotsCanReach) {
-    pendingMove.robotsUnreachable = true;
+  if ((robotCount > 0 && !robotsCanReach) || (droneCount > 0 && !dronesCanReach)) {
+    pendingMove.robotsUnreachable = robotCount > 0 && !robotsCanReach;
+    pendingMove.dronesUnreachable = droneCount > 0 && !dronesCanReach;
     pendingMove.toSalCode = toSalCode;
     renderSuburbDetail();
     return;
@@ -374,6 +383,7 @@ function renderSuburbDetail() {
         fromSalCode: sal_code,
         counts: Object.fromEntries(detail.movableUnitGroups.map((g) => [g.unitTypeKey, 0])),
         robotsUnreachable: false,
+        dronesUnreachable: false,
       };
       renderSuburbDetail();
     });
@@ -432,6 +442,20 @@ function renderUnitList() {
     }
   }
   unitListEl.replaceChildren(...rows);
+}
+
+/**
+ * Highlights the currently-active auto-fortify mode button (ANU-042) —
+ * click handlers are wired once in mountSidebar, same as the sidebar tabs
+ * above; this just reflects `currentState.autoFortifyMode` on every state
+ * update, including a reconnect, so the control never silently disagrees
+ * with the server's stored preference.
+ */
+function renderAutoFortify() {
+  if (!currentState) return;
+  for (const button of autoFortifyOptionsEl.querySelectorAll(".auto-fortify__option")) {
+    button.setAttribute("aria-pressed", String(button.getAttribute("data-mode") === currentState.autoFortifyMode));
+  }
 }
 
 function renderFactoryList() {
@@ -612,6 +636,11 @@ export function mountSidebar({ send: sendFn }) {
   }
   handleEl.addEventListener("click", () => sidebarEl.classList.toggle("sidebar--expanded"));
   debugAddScrapEl.addEventListener("click", () => send({ type: "debugAddScrap" }));
+  for (const button of autoFortifyOptionsEl.querySelectorAll(".auto-fortify__option")) {
+    button.addEventListener("click", () => {
+      send({ type: "setAutoFortifyMode", mode: button.getAttribute("data-mode") });
+    });
+  }
   showTab("territory");
 }
 
@@ -635,6 +664,7 @@ export function updateSidebarState(state) {
   scrapEl.textContent = String(state.economy.scrap);
   renderSuburbDetail();
   renderUnitList();
+  renderAutoFortify();
   renderFactoryList();
   renderSkillTree();
 }

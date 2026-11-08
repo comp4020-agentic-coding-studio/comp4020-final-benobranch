@@ -6,10 +6,19 @@
 // a single drone via a `{ drone: 1 }` order instead.
 //
 // ANU-038: the move test spawns its own time-scaled server (same pattern as
-// spec/combat.test.ts) — REAL_SAL_CODE/ANOTHER_REAL_SAL_CODE are two
-// arbitrary, possibly far-apart suburbs, and a drone's travel time at
-// GAME_TIME_SCALE=1 over an arbitrary distance could be well past any
-// reasonable waitFor budget against the shared, unscaled APP_URL server.
+// spec/combat.test.ts) — a drone's travel time at GAME_TIME_SCALE=1 over a
+// real distance could be well past any reasonable waitFor budget against the
+// shared, unscaled APP_URL server.
+//
+// ANU-047 gave drones a 5-road-hop ceiling from owned territory, so the move
+// test below can no longer use two fully arbitrary suburbs (its original
+// REAL_SAL_CODE/ANOTHER_REAL_SAL_CODE, 7 hops apart on the current map, is
+// exactly the "possibly far-apart" case that cap now rejects) — REAL_SAL_CODE
+// is now the player's own spawn (so the drone's move is measured from owned
+// territory, not an arbitrary unowned placement) and ANOTHER_REAL_SAL_CODE is
+// a real suburb reachable within that cap, still picked by BFS distance
+// rather than hand-picked adjacency, to keep exercising a genuine non-trivial
+// travel distance/time, not just a 1-hop move.
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,10 +29,46 @@ import { spawnServer, type SpawnedServer } from "./lib/spawn-server.ts";
 const baseUrl = inject("baseUrl");
 
 const mapData = JSON.parse(readFileSync("scripts/map/data/map.json", "utf8")) as {
-  suburbs: { sal_code: string }[];
+  suburbs: { idx: number; sal_code: string; name: string }[];
+  edges: { a: number; b: number }[];
+  spawn_table_by_lobby_size: Record<string, { spawns: string[] }>;
 };
-const REAL_SAL_CODE = mapData.suburbs[0].sal_code;
-const ANOTHER_REAL_SAL_CODE = mapData.suburbs[3].sal_code;
+const nameToSalCode = new Map(mapData.suburbs.map((s) => [s.name, s.sal_code]));
+const idxToSalCode = new Map(mapData.suburbs.map((s) => [s.idx, s.sal_code]));
+const adjacency = new Map<string, Set<string>>();
+for (const edge of mapData.edges) {
+  const a = idxToSalCode.get(edge.a);
+  const b = idxToSalCode.get(edge.b);
+  if (!a || !b) continue;
+  if (!adjacency.has(a)) adjacency.set(a, new Set());
+  if (!adjacency.has(b)) adjacency.set(b, new Set());
+  adjacency.get(a)!.add(b);
+  adjacency.get(b)!.add(a);
+}
+
+// The 4-player spawn ring's first entry (same fixture every other spec file
+// in this suite derives its single-player lobby's spawn from).
+const REAL_SAL_CODE = nameToSalCode.get(mapData.spawn_table_by_lobby_size["4"].spawns[0])!;
+// The farthest suburb still within ANU-047's 5-hop drone ceiling, found by
+// BFS from REAL_SAL_CODE — a genuine non-trivial distance, not a 1-hop pick.
+const ANOTHER_REAL_SAL_CODE = (() => {
+  const dist = new Map<string, number>([[REAL_SAL_CODE, 0]]);
+  const queue = [REAL_SAL_CODE];
+  let farthest = REAL_SAL_CODE;
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const neighbour of adjacency.get(current) ?? []) {
+      if (dist.has(neighbour)) continue;
+      const d = dist.get(current)! + 1;
+      dist.set(neighbour, d);
+      if (d <= 5) {
+        farthest = neighbour;
+        queue.push(neighbour);
+      }
+    }
+  }
+  return farthest;
+})();
 
 interface ServerMessage {
   type: string;
@@ -111,17 +156,16 @@ afterAll(async () => {
 
 it("moves a placed unit to a different real suburb via moveUnits, once travel time elapses", async () => {
   // A high scale so a drone's design travel time over REAL_SAL_CODE/
-  // ANOTHER_REAL_SAL_CODE's (arbitrary, possibly large) distance resolves
-  // within a real second or two — see the file-header comment.
+  // ANOTHER_REAL_SAL_CODE's (a genuine multi-hop, pre-ANU-047-cap-respecting)
+  // distance resolves within a real second or two — see the file-header
+  // comment.
   moveTestServer = await spawnServer({ port: moveTestPort, dataDir: moveTestDataDir, gameTimeScale: 500 });
   const { creator } = await createStartedLobby(`occupancy-move-${Date.now()}`, moveTestServer.baseUrl);
 
   // A drone, not a robot: this test exercises the move primitive itself
-  // (ANU-013), not movement-mode reachability rules — those are ANU-014's
-  // and are covered directly against server/units.ts in spec/units.test.ts.
-  // REAL_SAL_CODE/ANOTHER_REAL_SAL_CODE are arbitrary map suburbs with no
-  // guaranteed road adjacency to each other or to this player's spawn, so
-  // a robot here would now be rejected as unreachable.
+  // (ANU-013), not movement-mode reachability rules — those are ANU-014's/
+  // ANU-047's and are covered directly against server/units.ts in
+  // spec/units.test.ts.
   send(creator, { type: "placeUnit", sal_code: REAL_SAL_CODE, unitTypeKey: "drone" });
   const placed = await waitFor(creator, (m) => m.type === "occupancy" && (m.units as { sal_code: string }[]).some((u) => u.sal_code === REAL_SAL_CODE));
   const unitId = (placed.units as { id: string; sal_code: string }[]).find((u) => u.sal_code === REAL_SAL_CODE)!.id;

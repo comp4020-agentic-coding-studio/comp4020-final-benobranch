@@ -126,19 +126,28 @@ async function earnScrapByKilling(
   spawnSalCode: string,
   targetSalCode: string,
 ): Promise<number> {
+  // ANU-043: a "hit" outcome that doesn't kill the defender now ADVANCES the
+  // attacker into targetSalCode (it stays there, contesting it, rather than
+  // retreating to spawnSalCode) — so after the first attempt, the next
+  // dispatch's fromSalCode must track wherever the attacker actually ended
+  // up, not always spawnSalCode. `currentSalCode` is both the attacker's
+  // real current position (settled by settleArrivals before this function's
+  // next moveUnits call reads it) and the "attack in place" source once the
+  // attacker has already reached targetSalCode.
+  let currentSalCode = attackerSalCode;
   for (let i = 0; i < 20; i++) {
     send(defender, { type: "placeUnit", sal_code: targetSalCode, unitTypeKey: "drone" });
     await waitFor(defender, (m) => m.type === "occupancy", 1000);
-    send(attacker, { type: "moveUnits", fromSalCode: attackerSalCode, toSalCode: targetSalCode, counts: { robot: 1 } });
+    send(attacker, { type: "moveUnits", fromSalCode: currentSalCode, toSalCode: targetSalCode, counts: { robot: 1 } });
     try {
       const economy = await waitFor(attacker, (m) => m.type === "economy", 1000);
       return economy.scrap as number;
     } catch {
-      // Survived the hit — not yet a kill, no scrap credited. A "hit"
-      // outcome leaves the attacker's sal_code unchanged (server/units.ts
-      // only advances it on "moved"/"kill"), so it's still at spawnSalCode
-      // and the next iteration's moveUnits can dispatch it again (it's no
-      // longer in transit once settleArrivals resolved the "hit").
+      // Survived the hit — not yet a kill, no scrap credited. The attacker
+      // advanced into targetSalCode (ANU-043), so every subsequent attempt
+      // dispatches from there, attacking in place (a zero-distance order
+      // resolves effectively instantly).
+      currentSalCode = targetSalCode;
     }
   }
   throw new Error("attacker never landed a kill after 20 attempts");

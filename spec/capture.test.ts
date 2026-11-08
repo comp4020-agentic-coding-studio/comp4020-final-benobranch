@@ -190,6 +190,59 @@ it("capturing an enemy-owned suburb: the owner's own units are never counted as 
   store.close();
 });
 
+// ANU-044: reproduces the reported bug end-to-end -- two non-owning players
+// both garrisoned in the same neutral suburb must actually fight (via
+// server/units.ts's settleGarrisonCombat, called alongside settleCaptures
+// the same way server/index.ts's settleArrivals wrapper now does), not sit
+// in a frozen "contested" stand-off that silently resolves to one side
+// capturing uncontested once the other quietly leaves (the alternating-
+// capture loop the user described). territory.ts's own contest-freeze (the
+// test above this one) is correct and unchanged -- this test proves the
+// OTHER half of the fix: the units.ts side that actually destroys a
+// garrison so the contest naturally ends instead of looping forever.
+it("two non-owning players' garrisons in the same neutral suburb fight (not freeze forever) -- the contest resolves once one garrison is destroyed", () => {
+  const { store, territory, lobbyId, owner } = setup();
+  const { playerId: p1 } = store.resolvePlayer(undefined);
+  const { playerId: p2 } = store.resolvePlayer(undefined);
+  // rng() = 0.5 -> deterministic mid-range damage roll every hit.
+  const units = createUnits(store.db, () => 0.5);
+  units.placeUnit(lobbyId, p1, NEUTRAL_SAL_CODE, "robot");
+  units.placeUnit(lobbyId, p2, NEUTRAL_SAL_CODE, "robot");
+
+  // First settle: territory.ts correctly reports this as contested (2
+  // capturers present) and freezes progress -- this part already worked.
+  const firstSettle = territory.settleCaptures(lobbyId);
+  expect(firstSettle.captures[0].contestingPlayerIds.length).toBeGreaterThan(0);
+  expect(firstSettle.transfers).toHaveLength(0);
+
+  // Run the actual fix (settleGarrisonCombat) alongside settleCaptures,
+  // same pairing server/index.ts's settleArrivals wrapper now does, until
+  // one garrison is wiped out.
+  let ticks = 0;
+  for (; ticks < 10; ticks++) {
+    const outcomes = units.settleGarrisonCombat(lobbyId);
+    if (outcomes.length === 0) break;
+    territory.settleCaptures(lobbyId);
+    const remaining = units.getOccupancy(lobbyId).filter((u) => u.sal_code === NEUTRAL_SAL_CODE);
+    if (new Set(remaining.map((u) => u.ownerPlayerId)).size < 2) break;
+  }
+
+  const remaining = units.getOccupancy(lobbyId).filter((u) => u.sal_code === NEUTRAL_SAL_CODE);
+  const survivingOwners = new Set(remaining.map((u) => u.ownerPlayerId));
+  expect(survivingOwners.size, "combat must actually resolve the contest down to one side, not leave both standing forever").toBe(1);
+
+  // With only the survivor present, territory.ts now sees a SOLE capturer
+  // and resumes uncontested accrual for them -- the correct end state
+  // ("the survivor earns the zone"), not an alternation where the loser's
+  // side would somehow also get to capture.
+  const finalSettle = territory.settleCaptures(lobbyId);
+  expect(finalSettle.captures[0].contestingPlayerIds).toEqual([]);
+  expect([p1, p2]).toContain(finalSettle.captures[0].capturingPlayerId);
+  expect(survivingOwners.has(finalSettle.captures[0].capturingPlayerId!)).toBe(true);
+
+  store.close();
+});
+
 it("captureSpeedMultiplier changes the accrual rate — a 2x multiplier completes in half the design duration", () => {
   const { store, territory, units, lobbyId, owner } = setup();
   store.perks.setPerkMultiplier(lobbyId, owner, "captureSpeedMultiplier", 2);

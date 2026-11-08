@@ -9,6 +9,7 @@ import { openStore, type StoredLobby } from "./store.ts";
 import { createTerritory } from "./territory.ts";
 import { createUnits, listUnitTypes } from "./units.ts";
 import { createFactories } from "./factories.ts";
+import { createAutoFortify } from "./auto-fortify.ts";
 import { createSkillTree, speedMultiplier as skillTreeSpeedMultiplier } from "./skill-tree.ts";
 import { createTflopsSource } from "./tflops.ts";
 import { elapsedMs } from "./time.ts";
@@ -38,6 +39,7 @@ const units = createUnits(store.db);
 const factories = createFactories(store.db, units);
 const tflopsSource = createTflopsSource(territory);
 const skillTree = createSkillTree(store.db, tflopsSource);
+const autoFortify = createAutoFortify(territory, units, (lobbyId, playerId) => store.getAutoFortifyMode(lobbyId, playerId));
 
 interface ConnMeta {
   playerId: string;
@@ -138,17 +140,25 @@ function broadcastOccupancy(lobbyId: string): void {
 /**
  * Resolves every unit in this lobby whose travel time has elapsed
  * (server/units.ts's settleArrivals, ANU-038) against the destination's
- * CURRENT occupants, then relays the same side effects a synchronous
- * moveUnits outcome always has: an occupancy broadcast (units relocated/
- * destroyed), economy to any attacker who just landed a kill, and a
- * captures settle (an arrival can clear a defended suburb down to a single
- * occupant, or change who's present at either end of a capture). Called
- * before every occupancy-driven broadcast and from arrivalTicker below —
- * never from an armed per-unit timer (ADR 0001), since settleArrivals
- * itself only ever reads/writes the stored move_started_at timestamp.
+ * CURRENT occupants, THEN (ANU-044) resolves one ongoing exchange of hits
+ * between any enemy garrisons simply standing in the same suburb already —
+ * units.ts's settleGarrisonCombat, the fix for "two enemy teams garrisoned
+ * in the same zone never fight each other": an arrival-only combat trigger
+ * left stationary multi-owner garrisons to just sit there, with only
+ * territory.ts's capture-contest freeze ever reacting to their mutual
+ * presence (freezing progress, never resolving the units against each
+ * other) — see issues/ANU-044.md's Resolution for the full root cause.
+ * Relays the same side effects a synchronous moveUnits outcome always has:
+ * an occupancy broadcast (units relocated/destroyed), economy to any
+ * attacker who just landed a kill, and a captures settle (an arrival or a
+ * garrison kill can clear a defended suburb down to a single occupant, or
+ * change who's present at either end of a capture). Called before every
+ * occupancy-driven broadcast and from arrivalTicker below — never from an
+ * armed per-unit timer (ADR 0001), since both settle functions only ever
+ * read/write stored timestamps and current occupancy.
  */
 function settleArrivals(lobbyId: string): void {
-  const outcomes = units.settleArrivals(lobbyId);
+  const outcomes = [...units.settleArrivals(lobbyId), ...units.settleGarrisonCombat(lobbyId)];
   if (outcomes.length === 0) return;
   broadcastOccupancy(lobbyId);
   let empDetonated = false;
@@ -202,7 +212,12 @@ function broadcastCaptures(lobbyId: string): void {
 function sendEconomyToPlayer(lobbyId: string, playerId: string): void {
   const economy = store.getMemberEconomy(lobbyId, playerId);
   if (!economy) return;
-  const message: ServerMessage = { type: "economy", scrap: economy.scrap, tflops: tflopsSource.getTflops(lobbyId, playerId) };
+  const message: ServerMessage = {
+    type: "economy",
+    scrap: economy.scrap,
+    tflops: tflopsSource.getTflops(lobbyId, playerId),
+    autoFortifyMode: store.getAutoFortifyMode(lobbyId, playerId),
+  };
   for (const [socket, meta] of sockets) {
     if (meta.lobbyId === lobbyId && meta.playerId === playerId) send(socket, message);
   }
@@ -348,6 +363,28 @@ const arrivalTicker = setInterval(() => {
 }, 1000);
 arrivalTicker.unref();
 
+// Same ~1s per-lobby sweep shape as factoryTicker/captureTicker/
+// arrivalTicker above, for ANU-042's auto-fortify: each member whose mode
+// isn't "off" gets one redistribution round dispatched through the normal
+// moveUnits path (settleArrivals first, same reasoning as placeUnit/
+// moveUnits below, so a round never redistributes against stale in-transit
+// counts). Any dispatch this produces shows up via the next occupancy/
+// captures broadcast, same as a player-initiated move.
+const autoFortifyTicker = setInterval(() => {
+  const liveLobbyIds = new Set([...sockets.values()].map((m) => m.lobbyId).filter((id): id is string => id !== null));
+  for (const lobbyId of liveLobbyIds) {
+    if (!store.getLobby(lobbyId)?.started) continue;
+    settleArrivals(lobbyId);
+    const members = store.getLobbyMembers(lobbyId).filter((m) => store.getAutoFortifyMode(lobbyId, m.playerId) !== "off");
+    if (members.length === 0) continue;
+    for (const member of members) autoFortify.run(lobbyId, member.playerId);
+    broadcastOccupancy(lobbyId);
+    broadcastCaptures(lobbyId);
+  }
+}, 1000);
+autoFortifyTicker.unref();
+
+
 wss.on("connection", (socket) => {
   alive.add(socket);
   socket.on("pong", () => alive.add(socket));
@@ -368,7 +405,15 @@ wss.on("connection", (socket) => {
       // to trigger a tick, same stored-timestamp reasoning as settleCaptures
       // below — BEFORE reading occupancy/ownership so a reconnecting client
       // never sees a unit still shown as in-transit past its own arrival.
-      if (lobbyId) units.settleArrivals(lobbyId);
+      // ANU-044: also settle any garrison-vs-garrison combat that should
+      // have happened while nobody was connected to trigger a tick — same
+      // "no armed timer, just a stored-state settle" reasoning, so a
+      // reconnecting client doesn't see two enemy garrisons frozen in a
+      // stand-off that should already have traded hits.
+      if (lobbyId) {
+        units.settleArrivals(lobbyId);
+        units.settleGarrisonCombat(lobbyId);
+      }
       // settleCaptures runs BEFORE buildLobbyState below so a transfer that
       // should have completed while nobody was connected to trigger one
       // (stored-timestamp rule — no armed timer kept it running) is already
@@ -530,6 +575,13 @@ wss.on("connection", (socket) => {
       if (!meta.lobbyId || !store.getLobby(meta.lobbyId)?.started) return;
       store.addScrap(meta.lobbyId, meta.playerId, DEBUG_ADD_SCRAP_AMOUNT);
       sendEconomyToPlayer(meta.lobbyId, meta.playerId);
+      return;
+    }
+
+    if (message.type === "setAutoFortifyMode") {
+      if (!meta.lobbyId) return; // a lobby-scoped preference — nothing to set before joining one
+      store.setAutoFortifyMode(meta.lobbyId, meta.playerId, message.mode);
+      sendEconomyToPlayer(meta.lobbyId, meta.playerId); // economy carries autoFortifyMode (ANU-042)
       return;
     }
 
