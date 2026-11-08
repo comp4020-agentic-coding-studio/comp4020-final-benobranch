@@ -45,3 +45,33 @@
 export function quadrantAnchor([lx, ly], size, dirX, dirY) {
   return [lx + (dirX * size) / 2, ly + (dirY * size) / 2];
 }
+
+// ANU-052: quadrantAnchor puts ONE corner of the marker's footprint exactly
+// on label_point and extends `size` further toward (dirX, dirY) — fine for
+// not overlapping another quadrant-anchored marker (that's all ANU-050
+// checked), but label_point (Shapely's representative_point(), build_
+// geometry.py) is only guaranteed to land INSIDE the suburb polygon, with
+// zero guaranteed clearance to any edge. A marker anchored there can extend
+// past the suburb's own boundary into a neighbor/the void on a small/narrow
+// suburb — confirmed on "City" (mega tier, 900-wide marker, ~694-755 units
+// of actual clearance).
+/**
+ * Shrinks a marker's effective footprint so it stays inside the suburb's own
+ * bounding box in the direction quadrantAnchor would extend it — a cheap,
+ * exact-per-suburb stand-in for "stay inside the polygon" (the bbox is
+ * always a superset of the polygon, so this can still graze a concave
+ * suburb's actual edge, but never the suburb next door).
+ * @param {[number, number]} labelPoint
+ * @param {number} size
+ * @param {-1 | 1} dirX
+ * @param {-1 | 1} dirY
+ * @param {{x: number, y: number, width: number, height: number}} bbox - this suburb's own bbox (map-geometry.json's per-suburb `bbox`, same SVG coordinate space as label_point/path)
+ * @returns {number} `size`, or smaller if it would otherwise overflow bbox in the (dirX, dirY) direction
+ */
+export function clampMarkerSize([lx, ly], size, dirX, dirY, bbox) {
+  const clearanceX = dirX === -1 ? lx - bbox.x : bbox.x + bbox.width - lx;
+  const clearanceY = dirY === -1 ? ly - bbox.y : bbox.y + bbox.height - ly;
+  // Clamp uniformly (not per-axis) so the marker stays square instead of
+  // getting visually squashed on one axis only.
+  return Math.max(0, Math.min(size, clearanceX, clearanceY));
+}

@@ -57,7 +57,7 @@ import { UNIT_ARCHETYPE_ICONS, UNIT_MARKER_SIZE } from "./unit-icon.js";
 import { PLAYER_BASE_ICON, PLAYER_BASE_MARKER_SIZE } from "./base-icon.js";
 import { zoneVisual } from "./capture-visual.js";
 import { empBlackoutVisual } from "./emp-blackout-visual.js";
-import { quadrantAnchor } from "./marker-offset.js";
+import { quadrantAnchor, clampMarkerSize } from "./marker-offset.js";
 
 /**
  * @typedef {{idx: number, sal_code: string, name: string, is_remainder: boolean}} MapSuburb
@@ -70,7 +70,7 @@ import { quadrantAnchor } from "./marker-offset.js";
  *   spawn_table_by_lobby_size: Record<string, SpawnEntry>,
  *   source_attribution: Record<string, string>,
  * }} MapData
- * @typedef {{sal_code: string, path: string, label_point: [number, number]}} GeoSuburb
+ * @typedef {{sal_code: string, path: string, label_point: [number, number], bbox: ViewBox}} GeoSuburb
  * @typedef {{x: number, y: number, width: number, height: number}} ViewBox
  * @typedef {{
  *   suburbs: GeoSuburb[],
@@ -308,7 +308,10 @@ function initOnce(data, geometry) {
     if (!suburb) continue; // a data center name that doesn't resolve to a suburb is a data bug, not something to render around
     const geo = sal_codeToGeo.get(suburb.sal_code);
     if (!geo) continue;
-    const size = DATA_CENTER_TIER_MARKER_SIZE[dc.tier];
+    // ANU-052: clamp to this suburb's own bbox first — label_point has no
+    // guaranteed edge clearance, so a mega tier's 900-unit marker can
+    // otherwise overflow a small suburb into its neighbor (issues/ANU-052.md).
+    const size = clampMarkerSize(geo.label_point, DATA_CENTER_TIER_MARKER_SIZE[dc.tier], -1, -1, geo.bbox);
     // ANU-050: anchored into the upper-left quadrant of label_point rather
     // than centered on it — see marker-offset.js for why this, not just a
     // `<g>` reorder, is what actually keeps a data-center icon from being
@@ -418,12 +421,14 @@ export function renderOwnership(ownership, members) {
  */
 export function renderBases(ownership, members) {
   basesLayer.replaceChildren();
-  const size = PLAYER_BASE_MARKER_SIZE;
   for (const member of members) {
     if (!member.spawnSalCode) continue; // lobby hasn't started, or no spawn-table entry for this lobby size
     if (ownership[member.spawnSalCode] !== member.playerId) continue; // base captured by someone else — no marker
     const geo = sal_codeToGeo.get(member.spawnSalCode);
     if (!geo) continue;
+    // ANU-052: clamp to this suburb's own bbox, same reasoning as the
+    // data-center loop above.
+    const size = clampMarkerSize(geo.label_point, PLAYER_BASE_MARKER_SIZE, 1, -1, geo.bbox);
     // ANU-050: anchored into the upper-right quadrant — the opposite corner
     // from the data-center marker's upper-left anchor (renderers above) —
     // so a suburb holding both a data center and a player's base never has
@@ -870,7 +875,9 @@ export function renderFactories(factoryList, members) {
     const geo = sal_codeToGeo.get(factory.sal_code);
     if (!geo) continue;
     const visual = factoryVisual(factory, colorByPlayerId.get(factory.ownerPlayerId) ?? "#888");
-    const size = FACTORY_MARKER_SIZE;
+    // ANU-052: clamp to this suburb's own bbox, same reasoning as the
+    // data-center loop above.
+    const size = clampMarkerSize(geo.label_point, FACTORY_MARKER_SIZE, -1, 1, geo.bbox);
     // ANU-050: anchored into the lower-left quadrant — the one remaining
     // corner from the data-center (upper-left) and base (upper-right)
     // anchors above — so all three fixed-position marker types sharing a
