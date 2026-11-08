@@ -20,7 +20,7 @@ import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { openStore } from "../server/store.ts";
 import { createTerritory } from "../server/territory.ts";
-import { createUnits } from "../server/units.ts";
+import { createUnits, EMP_UNIT_TYPE_KEY } from "../server/units.ts";
 import { createAutoFortify, AUTO_FORTIFY_SURPLUS_THRESHOLD } from "../server/auto-fortify.ts";
 import type { AutoFortifyMode } from "../server/store.ts";
 
@@ -221,5 +221,54 @@ it("leaves an in-transit unit undisturbed — it's excluded from being re-select
   for (const id of inTransitIdsAfterFirstRound) {
     expect(inTransitAfterSecondRound.some((u) => u.id === id)).toBe(true);
   }
+  store.close();
+});
+
+// --- ANU-051: an idle EMP is never counted as auto-fortify surplus --- //
+
+it("an EMP surplus (even far over threshold) is never auto-dispatched — it always detonates on arrival, so auto-fortify moving one would self-inflict a blackout", () => {
+  const { store, units, autoFortify, lobbyId, owner } = setup();
+  grantOwnership(store, lobbyId, owner, [D, C]);
+  for (let i = 0; i < AUTO_FORTIFY_SURPLUS_THRESHOLD * 2; i++) units.placeUnit(lobbyId, owner, D, EMP_UNIT_TYPE_KEY);
+  setMode(store, lobbyId, owner, "balance");
+
+  autoFortify.run(lobbyId, owner);
+
+  expect(units.getOccupancy(lobbyId).filter((u) => u.unitTypeKey === EMP_UNIT_TYPE_KEY).every((u) => u.sal_code === D && !u.destinationSalCode)).toBe(true);
+  store.close();
+});
+
+it("an EMP surplus at a territory doesn't block a genuine drone surplus at the SAME territory from redistributing normally in the same call", () => {
+  const { store, units, autoFortify, lobbyId, owner } = setup();
+  grantOwnership(store, lobbyId, owner, [D, C]);
+  for (let i = 0; i < AUTO_FORTIFY_SURPLUS_THRESHOLD * 2; i++) units.placeUnit(lobbyId, owner, D, EMP_UNIT_TYPE_KEY);
+  for (let i = 0; i < 12; i++) units.placeUnit(lobbyId, owner, D, "drone");
+  setMode(store, lobbyId, owner, "balance");
+
+  autoFortify.run(lobbyId, owner);
+
+  // EMPs stay put ...
+  expect(units.getOccupancy(lobbyId).filter((u) => u.unitTypeKey === EMP_UNIT_TYPE_KEY).every((u) => u.sal_code === D && !u.destinationSalCode)).toBe(true);
+  // ... while the drone surplus at the exact same source territory still redistributes — this is a type-specific skip, not auto-fortify going inert for D.
+  expect(inTransitToCount(units, lobbyId, C, "drone")).toBeGreaterThan(0);
+  store.close();
+});
+
+it("an EMP in transit toward an owned territory doesn't count toward that territory's effective garrison for OTHER types either", () => {
+  const { store, units, autoFortify, lobbyId, owner } = setup();
+  grantOwnership(store, lobbyId, owner, [D, C, Y, Z]);
+  units.placeUnit(lobbyId, owner, D, EMP_UNIT_TYPE_KEY);
+  const empDispatch = units.moveUnits(lobbyId, owner, D, C, { [EMP_UNIT_TYPE_KEY]: 1 });
+  expect(empDispatch.ok).toBe(true);
+  for (let i = 0; i < 12; i++) units.placeUnit(lobbyId, owner, D, "drone");
+  setMode(store, lobbyId, owner, "balance");
+
+  autoFortify.run(lobbyId, owner);
+
+  // C still receives its fair share of the drone redistribution — an
+  // in-transit EMP toward C must not be mistaken for part of C's drone
+  // garrison (they're different types, grouped separately) and must not
+  // crash/short-circuit the rest of the per-type loop.
+  expect(inTransitToCount(units, lobbyId, C, "drone")).toBeGreaterThan(0);
   store.close();
 });
