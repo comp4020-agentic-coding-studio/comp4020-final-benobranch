@@ -40,6 +40,38 @@ standards derived from `README.md`'s definition of good — what the app must
 never do, what every page must hold to, what a change must not break — not
 the git mechanics, which stay in the referenced doc.
 
+## Standards from `README.md`'s definition of good
+
+The game's rules are settled now, so these hold for any change from here on:
+
+- **A corridor cut has to be visible fast, not just correct.** `README.md`'s
+  whole argument is that losing a suburb mid-game has to read as a real,
+  immediate event, not a stat that quietly updated. `spec/realtime.test.ts`
+  already enforces the mechanical floor (a lobby's state change reaches every
+  other connection in that lobby within ~1s) — any change that touches
+  ownership, capture or broadcast logic must keep that test green, and a new
+  write path that changes shared state needs its own broadcast coverage, not
+  an assumption that the existing tests happen to catch it.
+- **No chat, friends list, matchmaking, skill rating, or any other social
+  feature.** `README.md`'s "What I left out" section argues this
+  specifically: a chat box in a game this adversarial becomes a channel for
+  coordinating against whoever's losing, which undercuts the thing the game
+  is testing (acting on your own, under pressure, against people you don't
+  know). Don't add one "for convenience" on some later feature — if a future
+  issue seems to need player-to-player communication, that's a sign the
+  design has drifted from this README's argument, and the issue should say
+  so explicitly rather than quietly adding the feature.
+- **The map has to stay legible at phone width under real contention, not
+  just empty.** `README.md`'s "What the tests cover" section is explicit that
+  this is judged, not tested — no `spec/` assertion can check whether the map
+  "reads clearly," so the agent has to hold itself to it directly: any UI
+  change to the map, HUD, or unit/suburb rendering should be sanity-checked
+  against a narrow viewport with several owned/contested suburbs on screen at
+  once (not just one empty suburb), since that's the actual marking
+  condition (two Chrome profiles, both acting, at least one on a narrow
+  viewport) — per the cost-discipline rules below, this is a visual/code
+  read, not a live headless-browser session.
+
 ## Cost discipline (temporary, while burning course credit)
 
 Two things that quietly eat agent budget without being required by

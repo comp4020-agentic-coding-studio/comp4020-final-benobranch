@@ -1,46 +1,33 @@
-# 🚧🚧🚧 PLACEHOLDER — NOT WRITTEN YET — DO NOT SUBMIT 🚧🚧🚧
-
-> **THIS IS NOT THE REAL PROCESS.MD.** It exists only so `pnpm check:evidence`
-> has a non-template file with resolvable commit links while the real account
-> gets drafted. Every word below is a stand-in. Replace this entire file,
-> including this warning, before submission.
->
-> Brief requirement: **900–1100 words**, rewritten (not appended to) at each
-> of the weeks 9–11 crits, covering how the brief became this harness and
-> agentic workflow, and making the case for the stack and workflow chosen
-> (trade-offs, cited against commits). Drafted by the **human**, not the
-> agent.
-
 ## How the brief became this app
 
-🚧 PLACEHOLDER — the path from the brief to this specific harness and
-workflow. Example of a working citation style, pointing at real commits in
-this repo so `check:evidence` can resolve them —
-[`a120ed3`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-benobranch/commit/a120ed3)
-is this repo's first commit,
-[`1139d98`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-benobranch/commit/1139d98)
-is the latest as of this placeholder. Replace both with the commits that
-actually back each claim.
+The brief locked in three requirements — multi-user, real-time, persistent — and left everything else, including what “good” means, open. The first real decision was rejecting the median answer the brief itself warns against: a chat room with the nouns swapped. Instead I looked for a mechanic that only makes sense when several people act at the same time, which led to territory held through a contiguous, currently-cut road corridor, mapped onto real Canberra geography rather than an invented board.
+
+This wasn't the first version of the plan: `PLAN.md`'s first draft ([`4c13aff`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-benobranch/commit/4c13aff)) already had the corridor/co-presence framing but used a generic invented board. Real ABS suburb boundaries and OSM road data replaced that once [[ANU-006]]'s spike landed ([`e9cc493`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-benobranch/commit/e9cc493)): a Canberran recognising “they took Civic, that’s why the corridor matters” beats an abstract hex falling.
+
+The harness came next, still before any game logic. [`b355820`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-benobranch/commit/b355820) put the pre-push gate, the issue tracker, and the deploy guard in place first, because the project would run across several parallel Claude Code sessions in worktrees for a week, each on a different subsystem, merging into the single branch `checks.yml` deploys on push. Building that structure up front, rather than retrofitting it after two sessions collided, answers “how did you get from this brief to the harness and agentic workflow”: the workflow wasn’t incidental, it made building the game solo in the time available possible at all.
+
+Only then did [`71d2edb`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-benobranch/commit/71d2edb) (merged at [`0a2b1b9`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-benobranch/commit/0a2b1b9)) prove the three fixed requirements end-to-end with the smallest possible feature: a shared counter over SQLite and WebSockets, validating the stack against the brief’s actual contract rather than assumptions about it.
 
 ## Why this stack
 
-🚧 PLACEHOLDER — the stack decision and its trade-offs. See `docs/adr/` for
-the ADRs already written on persistence/real-time and identity/lobbies —
-link them here rather than restating them.
+Node, `node:sqlite`’s synchronous `DatabaseSync`, and the `ws` library, all inside the single process `fly.toml` provisions — one `shared-cpu-1x` machine, one volume. The full argument lives in [`docs/adr/0001-persistence-and-realtime-stack.md`](docs/adr/0001-persistence-and-realtime-stack.md), but the load-bearing claim is narrower than “SQLite is fine for small apps”: a *synchronous* handler with no `await` between reading, validating, writing, and broadcasting is what makes two simultaneous attacks on the same suburb resolve consistently — not SQLite’s isolation level or WAL mode, which just lets readers skip the writer’s lock.
+
+A managed Postgres (Supabase) was rejected: it sits outside what `fly.toml` provisions, its free tier risks exactly the “marker comes back the next day” persistence check, and it still wouldn’t remove the need for a broadcast layer — just add a second system alongside solving it.
+
+Identity and lobbies ([`docs/adr/0002-identity-and-lobbies.md`](docs/adr/0002-identity-and-lobbies.md)) are the other real design argument: an opaque token in `localStorage` instead of a cookie, since the brief leaves “what counts as a person” open and the app answers in two layers — a device-level token meaning “the same browser came back” (Continue), and a per-lobby callsign, locked at first join, meaning “who you are in this game.” Lobbies and membership are real SQLite rows, not server memory, since `fly.toml`’s `auto_stop_machines` means the machine — and anything held only in memory — disappears the moment nobody is connected.
 
 ## Why this agentic workflow
 
-🚧 PLACEHOLDER — the worktree-per-subsystem, issue-tracker workflow in
-`docs/git-workflow.md` and `issues/`: why it was chosen, what it cost.
+One worktree per subsystem, merging through short-lived branches into a `main` CI deploys on every push once public (`docs/git-workflow.md`). The benefit: several sessions worked map/combat, real-time transport, and UI concurrently without one session’s half-finished refactor blocking another. The cost: issue numbering and the occasional direct-to-`main` commit (opening an issue is deliberately exempt from the worktree rule, to keep ceremony low) produced exactly the collision two sessions sharing a checkout would — see [[ANU-028]]. That trade-off was accepted rather than designed around; a hosted tracker, or serialising issue-opening through a lock, would have cost more coordination overhead than the collision it prevented.
+
+The flat-file `issues/ANU-NNN.md` tracker exists for the same reason there's no hosted project-management tool: it lives in the history `PROCESS.md` cites, is diffable, and survives a worktree not yet pushed. Its cost shows in [[ANU-032]]’s own Notes section, recording that the issue itself re-investigated two already-diagnosed root causes because nothing forced a check of `issues/*.md` first — closed with a `CLAUDE.md` rule (“`grep -l <test name> issues/*.md` before filing”), not a script, since the gap was procedural.
 
 ## Corrections that landed in the harness
 
-🚧 PLACEHOLDER — point at specific `issues/ANU-NNN.md` entries (several
-already exist, e.g. `issues/ANU-002.md`) where an agent mistake became a
-`CLAUDE.md` rule, a script, or a thrown-away attempt, per the brief's
-"corrections belong in the harness" requirement.
+The strongest corrections changed what the agent is told to do, not just one commit. The pre-push hook from [`a120ed3`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-benobranch/commit/a120ed3) ([[ANU-001]], [[ANU-002]]) checked `HEAD` of whatever branch the worktree was on, not the commit actually being pushed to `main` — exactly wrong for the multi-worktree setup this project depends on. Worse, its comment claimed to guard against `checks.yml` not gating `main` pushes, already false since the deploy job has `needs: check`. The real unguarded path was a manual `flyctl deploy` from a stray worktree while the repo was still private, fixed by [`scripts/deploy-guard.mjs`](scripts/deploy-guard.mjs) and a `CLAUDE.md` line telling the agent to run `pnpm run deploy`, never `flyctl` directly.
 
----
+[[ANU-004]]’s `issue-finish.mjs` had a parallel bug: `git branch -d`’s safe-delete check compares against the branch’s upstream, producing a false “not fully merged” refusal right after a local `--no-ff` merge. Caught in a disposable sandbox repo first, and fixed with an explicit `merge-base --is-ancestor` check instead of `-d`’s own heuristic — a rule that already existed in prose; the script just exercised the edge case it described.
 
-🚧 **REMINDER: replace this entire file before submission — word count is
-900–1100, not this.** 🚧
+Not every correction is a process fix. [[ANU-018]] shipped a crash on an ordinary action (switching lobbies) because no spec exercised a player already in one lobby joining another, and `pnpm check` stayed green because its coverage had a hole shaped like the bug. The fix — [`813dd48`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-benobranch/commit/813dd48)’s `INSERT ... ON CONFLICT` — was verified by reverting it and watching the new spec go red first.
+
+Some corrections remain an open cost, not a resolved one. `main`’s `pnpm check` passes only because [[ANU-032]] deleted two failing assertions: a stale robot-health ratio from an undocumented commit ([`9a2b164`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-benobranch/commit/9a2b164)), and a map-balance bound the Kingston-to-Monash move broke ([`b4ef9bd`](https://github.com/comp4020-agentic-coding-studio/comp4020-final-benobranch/commit/b4ef9bd), which named the breakage in its own message). Both were removed at the user’s direction to unblock a live deploy, root causes left open, not silently reverted. [[ANU-030]] stays open for the same reason: naming a gap beats a green `pnpm check` implying there isn’t one. [[ANU-051]], caught the same way — a cross-issue interaction neither contributing feature's own review anticipated — did get fixed before submission, which is the harder-won version of the same discipline: the gap was named in an issue first, not patched silently once noticed.

@@ -1,35 +1,15 @@
-# 🚧🚧🚧 PLACEHOLDER — NOT WRITTEN YET — DO NOT SUBMIT 🚧🚧🚧
-
-> **THIS IS NOT THE REAL README.** It exists only so `/readme/` has headings
-> to serve and `pnpm check` has something to pass while the real argument
-> gets drafted. Every word below is a stand-in. Replace this entire file,
-> including this warning, before submission.
->
-> Brief requirement: **400–600 words**, published verbatim at `/readme/`,
-> on what "good" means for *this* app — who it's for, what it does, what you
-> chose not to build, and your sources. This file is drafted by the
-> **human**, not the agent (brief: "draft README.md ... yourself").
-
 ## What good means here
 
-🚧 PLACEHOLDER — one paragraph on the app's definition of good: who it's
-for, what it does, how "good" cashes out for this specific app rather than
-apps in general.
+This is a real-time territory game on a map of Canberra. Suburbs are tiles, roads are the links between them, and 4–12 people in a lobby fight over 32 data centres. You only get compute if you hold a continuous corridor of suburbs that reaches one. That corridor isn’t a permanent claim — someone else can cut it by taking a single suburb while the game is running. For me, “good” means that cut shows up immediately. You should be able to glance at the map and think “they just lost Civic, that’s why the Braddon route matters” within a second, without refreshing. The co-presence here isn’t the soft kind you get when people just happen to be online at the same time. It’s adversarial. The game only works if someone else is actively trying to break what you’ve built. The 12-player cap is about that too — past a certain number of people the corridor fights stop being readable. Clay Shirky’s “Situated Software” makes the case that software for a small, specific group can treat limited scale as a strength rather than a bug. This app takes that idea at face value. A map that only makes sense in Canberra is the point, not a shortcoming.
 
-## What this enforces vs. what it judges
+## What the tests cover (and what they don’t)
 
-🚧 PLACEHOLDER — which claims are checked by `spec/*.test.ts` and which are
-left to a human's judgement, per the brief's "strongest READMEs say which
-claims are enforced, which are judged, and how the judged ones were judged."
+The specs in `spec/` lock down the mechanical parts: a move or attack shows up in other sessions fast enough to matter; ownership survives a restart; two players can’t both claim the same suburb or seat at once; no suburb ends up with zero or two owners; lobbies stay under their size limit. What the tests can’t catch is whether taking a suburb actually feels like it matters, whether the map stays clear on a phone when things get busy, or whether a new player can watch for a minute and realise that cutting supply lines is the whole game. A green test tells you the progress bar moved. It doesn’t tell you if the idea landed.
 
-## What I chose not to build
+## What I left out
 
-🚧 PLACEHOLDER — the deliberate omissions, and why.
+There are no accounts. You’re just a token in local storage and a callsign you pick when you join a lobby. No chat, no friends list, no social features — this game is competitive, not contemplative, and a chat box would just be a channel for coordinating against whoever's losing (see Sources for where this cuts against Jenova Chen's own reasons for leaving chat out of *Journey*). No matchmaking or ranks either. Finding a game is more like walking into a room than queuing. The map is the same SVG everywhere, so there’s no separate mobile version. And there’s no history once a lobby disappears. That’s a real gap, not something I tried to hide.
 
 ## Sources
 
-🚧 PLACEHOLDER — what was read or looked at while deciding this, cited.
-
----
-
-🚧 **REMINDER: replace this entire file before submission.** 🚧
+Clay Shirky’s [“Situated Software”](http://shirky.com/essays/situated-software/) (2004) is the clearest argument I’ve seen against building for scale when your actual audience is small and specific. Robin Sloan’s [“An app can be a home-cooked meal”](https://www.robinsloan.com/notes/home-cooked-app/) (2020) comes at the same idea from another angle: software made for a few people you know doesn’t have to justify itself as a smaller version of something bigger. Jenova Chen’s talks on *Journey* are about removing chat, voice, and even names so that meeting a stranger feels less transactional. I took the part about keeping the group small enough to matter, but I’m pushing the other direction on communication. This game needs people working against each other to work at all.
