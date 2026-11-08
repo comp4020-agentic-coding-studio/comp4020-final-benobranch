@@ -28,7 +28,8 @@ export function nowIso(): string {
 /**
  * The inverse of elapsedMs: a timestamp such that elapsedMs(result, scale)
  * read back immediately equals `accumulatedMs` — used to resume a paused
- * stored-timestamp duration (ANU-017's capture pause/resume) without losing
+ * stored-timestamp duration (ANU-017's capture pause/resume, ANU-048's
+ * factory-production freeze across an EMP blackout) without losing
  * progress: "a new capture_started_at set to 'now minus accumulated,' not a
  * progress reset" (issues/ANU-017.md).
  */

@@ -85,3 +85,34 @@ it("TFLOPS is scoped per lobby — holding a data center in one lobby doesn't co
   expect(tflopsSource.getTflops(lobbyB.lobbyId, playerId)).toBe(0);
   store.close();
 });
+
+// --- ANU-048: a blacked-out data center contributes 0 TFLOPS for the duration --- //
+
+it("a data-center suburb under an active EMP blackout contributes 0 TFLOPS to its owner's sum", () => {
+  const { store, territory, tflopsSource, lobbyId, playerId } = setup();
+  setOwner(store, lobbyId, MEGA_DATA_CENTER_SAL_CODE, playerId);
+  setOwner(store, lobbyId, STANDARD_DATA_CENTER_SAL_CODE, playerId);
+  expect(tflopsSource.getTflops(lobbyId, playerId)).toBe(115);
+
+  territory.empStrike(lobbyId, MEGA_DATA_CENTER_SAL_CODE);
+  // Only the struck data center is zeroed — the other keeps contributing,
+  // proving this is a per-suburb filter, not a blanket "owner is EMP'd" rule.
+  expect(tflopsSource.getTflops(lobbyId, playerId)).toBe(15);
+  store.close();
+});
+
+it("TFLOPS resumes counting a data center once its EMP blackout expires — no stored balance to unfreeze", () => {
+  const { store, territory, tflopsSource, lobbyId, playerId } = setup();
+  setOwner(store, lobbyId, MEGA_DATA_CENTER_SAL_CODE, playerId);
+  territory.empStrike(lobbyId, MEGA_DATA_CENTER_SAL_CODE);
+  expect(tflopsSource.getTflops(lobbyId, playerId)).toBe(0);
+
+  // Backdate the strike past EMP_BLACKOUT_DURATION_MS — simulates expiry
+  // without a real 20-minute wait.
+  store.db
+    .prepare("UPDATE suburb_ownership SET emp_started_at = ? WHERE lobby_id = ? AND sal_code = ?")
+    .run(new Date(Date.now() - 21 * 60_000).toISOString(), lobbyId, MEGA_DATA_CENTER_SAL_CODE);
+
+  expect(tflopsSource.getTflops(lobbyId, playerId)).toBe(100);
+  store.close();
+});

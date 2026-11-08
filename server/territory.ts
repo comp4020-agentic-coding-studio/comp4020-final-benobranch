@@ -6,7 +6,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { spawnSalCodesForCapacity } from "./map-data.ts";
 import { createPerkHook } from "./perks.ts";
-import { backdatedStart, elapsedMs, nowIso } from "./time.ts";
+import { backdatedStart, elapsedMs, GAME_TIME_SCALE, nowIso } from "./time.ts";
 import type { SuburbCaptureState } from "./protocol.ts";
 
 /**
@@ -20,6 +20,19 @@ import type { SuburbCaptureState } from "./protocol.ts";
  * responsive within a session.
  */
 export const CAPTURE_DURATION_MS = 60_000;
+
+/**
+ * How long an EMP's blackout (server/units.ts's settleArrivals — an "emp"
+ * unit's arrival always detonates, never fights) disables a territory's
+ * factory production (server/factories.ts) and data-center TFLOPS
+ * contribution (server/tflops.ts) for, per the user's own instruction
+ * ("Set that duration for 20 minutes for the moment"). Capture progress and
+ * combat at a blacked-out suburb are explicitly NOT affected (confirmed with
+ * the user via AskUserQuestion — issues/ANU-048.md's Notes) — this constant
+ * only gates `isEmpActive` below, which `settleFactory`/`getTflops` check,
+ * not `settleSuburb`.
+ */
+export const EMP_BLACKOUT_DURATION_MS = 20 * 60_000;
 
 export interface CaptureTransfer {
   salCode: string;
@@ -72,6 +85,27 @@ export interface Territory {
    * armed per-suburb timer.
    */
   settleCaptures(lobbyId: string): { captures: SuburbCaptureState[]; transfers: CaptureTransfer[] };
+  /**
+   * Starts (or refreshes) an EMP blackout at `salCode`, regardless of
+   * current ownership (an EMP can land on a neutral/unowned suburb — "any
+   * territory" per the user's request) — called by server/units.ts's
+   * settleArrivals the instant an "emp" unit's arrival detonates. A second
+   * strike on an already-active blackout REFRESHES the full duration from
+   * this moment rather than stacking or being rejected (confirmed with the
+   * user via AskUserQuestion — issues/ANU-048.md's Notes), which this
+   * implements trivially by always overwriting `emp_started_at` to now.
+   */
+  empStrike(lobbyId: string, salCode: string): void;
+  /** Whether `salCode` currently has an unexpired EMP blackout — checked by server/factories.ts's settleFactory and server/tflops.ts's getTflops before advancing production / counting TFLOPS. */
+  isEmpActive(lobbyId: string, salCode: string): boolean;
+  /**
+   * sal_code -> ISO expiry timestamp (emp_started_at + EMP_BLACKOUT_DURATION_MS
+   * in real time) for every suburb with an active blackout in this lobby —
+   * sparse, same convention as `getOwnership`/`settleCaptures`'s `captures`.
+   * Broadcast on `LobbyState.empActiveUntil` so clients can derive a live
+   * countdown without polling (server/protocol.ts).
+   */
+  getActiveEmpBlackouts(lobbyId: string): Record<string, string>;
 }
 
 export function createTerritory(db: DatabaseSync): Territory {
@@ -123,6 +157,24 @@ export function createTerritory(db: DatabaseSync): Territory {
   // the occupancy query above returns no row for it.
   const selectActiveCaptureSalCodes = db.prepare(
     "SELECT sal_code AS salCode FROM suburb_ownership WHERE lobby_id = ? AND capturing_player_id IS NOT NULL",
+  );
+  // EMP blackout (ANU-048): an INSERT ... ON CONFLICT upsert, same shape as
+  // upsertOwner above, so a strike on a suburb with no suburb_ownership row
+  // yet (neutral/unowned — an EMP can land anywhere) still records the
+  // blackout rather than requiring ownership to exist first. Always
+  // OVERWRITES emp_started_at to now, which is exactly the confirmed
+  // "refresh to full duration, don't stack" re-strike rule — there is no
+  // separate "already active" branch to write.
+  const upsertEmpStrike = db.prepare(`
+    INSERT INTO suburb_ownership (lobby_id, sal_code, emp_started_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(lobby_id, sal_code) DO UPDATE SET emp_started_at = excluded.emp_started_at
+  `);
+  const selectEmpStartedAt = db.prepare(
+    "SELECT emp_started_at AS empStartedAt FROM suburb_ownership WHERE lobby_id = ? AND sal_code = ?",
+  );
+  const selectActiveEmpBlackouts = db.prepare(
+    "SELECT sal_code AS salCode, emp_started_at AS empStartedAt FROM suburb_ownership WHERE lobby_id = ? AND emp_started_at IS NOT NULL",
   );
 
   function effectiveCaptureDurationMs(lobbyId: string, capturingPlayerId: string): number {
@@ -274,6 +326,35 @@ export function createTerritory(db: DatabaseSync): Territory {
       }
 
       return { captures, transfers };
+    },
+
+    empStrike(lobbyId, salCode) {
+      upsertEmpStrike.run(lobbyId, salCode, nowIso());
+    },
+
+    isEmpActive(lobbyId, salCode) {
+      const row = selectEmpStartedAt.get(lobbyId, salCode) as { empStartedAt: string | null } | undefined;
+      if (!row?.empStartedAt) return false;
+      return elapsedMs(row.empStartedAt) < EMP_BLACKOUT_DURATION_MS;
+    },
+
+    getActiveEmpBlackouts(lobbyId) {
+      const rows = selectActiveEmpBlackouts.all(lobbyId) as { salCode: string; empStartedAt: string }[];
+      const result: Record<string, string> = {};
+      for (const row of rows) {
+        if (elapsedMs(row.empStartedAt) >= EMP_BLACKOUT_DURATION_MS) continue; // expired — not active, don't report it
+        // emp_started_at + EMP_BLACKOUT_DURATION_MS converted to real ms the
+        // same way backdatedStart converts an accumulated GAME-ms duration —
+        // the client derives its own live countdown from this absolute
+        // timestamp (same "server sends a timestamp, client computes the
+        // live value" split every other progress readout in this codebase
+        // already uses), so it must be a real wall-clock instant, not a
+        // GAME_TIME_SCALE-scaled one.
+        const realDurationMs = GAME_TIME_SCALE > 0 ? EMP_BLACKOUT_DURATION_MS / GAME_TIME_SCALE : 0;
+        const expiresAt = new Date(Date.parse(row.empStartedAt) + realDurationMs).toISOString();
+        result[row.salCode] = expiresAt;
+      }
+      return result;
     },
   };
 }

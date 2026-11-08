@@ -68,4 +68,15 @@ export const SKILL_NODES = [
   // explicit note for whichever future issue implements TFLOPS flow
   // (issues/ANU-016.md's Done-when).
   { id: "data-uplink", prerequisiteId: null, baseResearchTimeMs: 30_000, effectKind: "perk", icon: "icons/skills/data-uplink.png", name: "Data Uplink", description: "1.5x data transfer speed for data centers.", effectLive: false },
+  // ANU-048: by far the longest node in the tree (10x every other root's
+  // 30s) — confirmed with the user via AskUserQuestion that the EMP should
+  // be "very hard to come by," and a standalone root (no prerequisite,
+  // same shape as the other six roots) rather than gated behind an existing
+  // node. Gates the "emp" unit_types row (server/units.ts) the same
+  // requires_skill_node mechanism advanced-drone/advanced-robot already use
+  // — structural, not a perk multiplier. Reuses an existing icon (no new
+  // pixel-art asset sourced for this issue) since "lean-production"'s
+  // lightning-bolt glyph already reads as an electrical/circuitry effect,
+  // the closest existing fit for an electromagnetic pulse.
+  { id: "emp-research", prerequisiteId: null, baseResearchTimeMs: 300_000, effectKind: "structural", icon: "icons/skills/lean-production.png", name: "EMP Research", description: "Factories also build EMP: blacks out a territory's factories and data centers for 20 minutes on arrival.", effectLive: true },
 ];

@@ -468,6 +468,43 @@
   fill: var(--accent);
 }
 
+/* ANU-048: a persistent EMP blackout overlay — red border + red diagonal
+   stripes over the suburb's existing fill (never replacing it, per the
+   user's "the underlying fill colour ... should still be the colour of the
+   occupying player" instruction) plus a white countdown. pointer-events:
+   none on the stripe/border so taps still resolve to the underlying .suburb
+   path, same reasoning .capture-stripe/.dc-marker already give for their
+   own decorative overlays. --danger is style.css's shared red token. */
+.emp-stripe {
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+.emp-stripe__band {
+  fill: var(--danger);
+}
+
+.emp-border {
+  fill: none;
+  stroke: var(--danger);
+  /* Thicker than .suburb's own boundary stroke (3) so a blacked-out
+     territory's border reads as a distinct, deliberate status marker, not
+     just a slightly-different-colored map edge. */
+  stroke-width: 6;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+/* Same plain-white-readable-over-any-backdrop treatment as
+   .unit-marker__count/.transit-arrow__count, sized the same SVG-user-unit
+   way those already are. */
+.emp-countdown {
+  fill: #ffffff;
+  font-size: 160px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
 @media (max-width: 480px) {
   .map-panel {
     height: min(60vh, 480px);

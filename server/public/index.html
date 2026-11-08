@@ -103,11 +103,22 @@
             <!-- ANU-017's renderCapture: one <pattern> per rendered diagonal-stripe layer, referenced
                  by #map-ownership's overlay paths below. -->
             <defs id="map-capture-defs"></defs>
+            <!-- ANU-048's renderEmpBlackout: one red diagonal-stripe <pattern> per blacked-out suburb,
+                 referenced by #map-emp's overlay paths below — same per-suburb-pattern technique as
+                 ANU-017's capture stripes, kept in its own defs rather than reusing map-capture-defs
+                 since the two layers' patterns are rebuilt independently on different broadcasts. -->
+            <defs id="map-emp-defs"></defs>
             <g id="map-suburbs"></g>
             <!-- ANU-017's renderCapture layer (diagonal-stripe contest visuals + progress bar) —
                  ANU-020's plain ownership fill colors the .suburb paths directly instead (renderOwnership),
                  since a capture never changes who currently OWNS a suburb until it completes. -->
             <g id="map-ownership"></g>
+            <!-- ANU-048's renderEmpBlackout: red border + red diagonal stripes over a blacked-out
+                 suburb, drawn ABOVE #map-ownership (so a persistent blackout reads as distinct from
+                 an in-progress capture's own stripes) but the owner's plain fill (.suburb path itself,
+                 renderOwnership) stays untouched underneath — "the underlying fill colour of a
+                 territory should still be the colour of the occupying player" per the user's request. -->
+            <g id="map-emp"></g>
             <g id="map-data-centers"></g>
             <g id="map-spawns"></g>
             <!-- ANU-025's base icon layer (one skull per player, owner-colored, only while they still hold their kickoff spawn suburb) -->
@@ -127,6 +138,9 @@
                  center icon, units, bases, factories) can hide them; renderCapture draws each one just
                  below the suburb's centered icon rather than across it. -->
             <g id="map-capture-progress"></g>
+            <!-- ANU-048's white EMP countdown text — topmost for the same reason map-capture-progress
+                 is: it must read over any marker layer underneath, not just over the stripe/fill it sits on. -->
+            <g id="map-emp-countdown"></g>
           </svg>
           <div id="map-tooltip" class="map-tooltip" hidden></div>
         </div>

@@ -90,6 +90,7 @@ function buildLobbyState(lobby: StoredLobby): LobbyState {
       spawnSalCode: m.spawnSalCode,
     })),
     ownership: territory.getOwnership(lobby.lobbyId),
+    empActiveUntil: territory.getActiveEmpBlackouts(lobby.lobbyId),
   };
 }
 
@@ -160,9 +161,17 @@ function settleArrivals(lobbyId: string): void {
   const outcomes = [...units.settleArrivals(lobbyId), ...units.settleGarrisonCombat(lobbyId)];
   if (outcomes.length === 0) return;
   broadcastOccupancy(lobbyId);
+  let empDetonated = false;
   for (const outcome of outcomes) {
     if (outcome.outcome === "kill") sendEconomyToPlayer(lobbyId, outcome.attacker.ownerPlayerId);
+    if (outcome.outcome === "emp-detonated") empDetonated = true;
   }
+  // ANU-048: an EMP detonation writes LobbyState.empActiveUntil, not
+  // occupancy/captures — re-broadcast lobby state so every socket in this
+  // lobby actually sees the new blackout, same "relay the side effects a
+  // synchronous outcome always has" pattern broadcastCaptures' own
+  // transfers-trigger-broadcastLobbyState branch below already follows.
+  if (empDetonated) broadcastLobbyState(lobbyId);
   broadcastCaptures(lobbyId);
 }
 

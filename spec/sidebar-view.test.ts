@@ -199,3 +199,56 @@ it("unitsByZone is empty when the player has no units anywhere", () => {
   const theirUnit = { id: "u1", ownerPlayerId: THEM, sal_code: "80001-0", unitTypeKey: "robot", health: 6 };
   expect(unitsByZone({ occupancy: [theirUnit], myPlayerId: ME })).toEqual([]);
 });
+
+// --- ANU-048: empCountdownLabel surfaces a suburb's active EMP blackout --- //
+
+it("a suburb with no entry in empActiveUntil at all reports empCountdownLabel null", () => {
+  const detail = suburbDetailViewModel({
+    sal_code: "80001-0",
+    ownership: { "80001-0": ME },
+    occupancy: [],
+    factories: [],
+    members: MEMBERS,
+    myPlayerId: ME,
+    empActiveUntil: {},
+  });
+  expect(detail.empCountdownLabel).toBeNull();
+});
+
+it("empActiveUntil is optional — omitting it entirely still reports empCountdownLabel null, same as an empty object", () => {
+  const detail = suburbDetailViewModel({
+    sal_code: "80001-0",
+    ownership: { "80001-0": ME },
+    occupancy: [],
+    factories: [],
+    members: MEMBERS,
+    myPlayerId: ME,
+  });
+  expect(detail.empCountdownLabel).toBeNull();
+});
+
+it("a suburb with an active EMP blackout reports a real MM:SS countdown label", () => {
+  const detail = suburbDetailViewModel({
+    sal_code: "80001-0",
+    ownership: { "80001-0": ME },
+    occupancy: [],
+    factories: [],
+    members: MEMBERS,
+    myPlayerId: ME,
+    empActiveUntil: { "80001-0": new Date(Date.now() + 5 * 60_000).toISOString() },
+  });
+  expect(detail.empCountdownLabel).toBe("5:00");
+});
+
+it("empActiveUntil entries for OTHER suburbs don't leak into this suburb's countdown", () => {
+  const detail = suburbDetailViewModel({
+    sal_code: "80001-0",
+    ownership: { "80001-0": ME },
+    occupancy: [],
+    factories: [],
+    members: MEMBERS,
+    myPlayerId: ME,
+    empActiveUntil: { "80002-0": new Date(Date.now() + 5 * 60_000).toISOString() },
+  });
+  expect(detail.empCountdownLabel).toBeNull();
+});

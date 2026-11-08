@@ -24,6 +24,13 @@ export function createTflopsSource(territory: Territory): TflopsSource {
       let total = 0;
       for (const [salCode, ownerPlayerId] of Object.entries(ownership)) {
         if (ownerPlayerId !== playerId) continue;
+        // ANU-048: a data-center suburb under an active EMP blackout
+        // contributes 0 TFLOPS for the duration — no persisted balance to
+        // unfreeze here (TFLOPS is already a live-computed sum, not an
+        // accrued one, per this module's own header comment), so this is
+        // just a filter on the existing per-suburb loop, not a settle/
+        // resume mechanism the way server/factories.ts's production needs.
+        if (territory.isEmpActive(lobbyId, salCode)) continue;
         total += dataCenterTflops.get(salCode) ?? 0;
       }
       return total;

@@ -500,6 +500,16 @@ button:not(:disabled):hover {
   background: var(--border);
 }
 
+/* ANU-048: matches the map's own red EMP treatment (map.css's --danger-
+   based .emp-border/.emp-stripe) rather than the sidebar's usual dim text,
+   so a blacked-out suburb reads as the same "something is wrong here"
+   status in both places. */
+.suburb-detail__emp-status {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--danger);
+}
+
 .suburb-detail__actions {
   display: flex;
   flex-direction: column;

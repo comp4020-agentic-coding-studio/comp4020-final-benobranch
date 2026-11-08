@@ -205,6 +205,25 @@ export interface LobbyState {
   members: PlayerPresence[];
   /** sal_code -> owner playerId, sparse (unowned suburbs are simply absent). */
   ownership: Record<string, string>;
+  /**
+   * sal_code -> ISO expiry timestamp, sparse (ANU-048: absent for any
+   * suburb with no active EMP blackout, same sparse convention ownership
+   * above already uses) — an EMP's arrival (server/units.ts's
+   * settleArrivals) blacks out that suburb's factory production and
+   * data-center TFLOPS contribution for server/territory.ts's
+   * EMP_BLACKOUT_DURATION_MS. Rides on LobbyState rather than becoming a
+   * fourth per-suburb broadcast type (alongside occupancy/factories/
+   * captures) since it's suburb-scoped state belonging alongside ownership
+   * on every broadcast a client already receives — closer to how
+   * `ownership` itself is carried than to captures' own separate message,
+   * and an EMP strike is rare enough (confirmed "very hard to come by")
+   * that it doesn't need its own dedicated high-frequency channel the way
+   * occupancy/factories/captures do. The client derives its own live
+   * countdown from this absolute timestamp, same "server sends a
+   * timestamp, client computes the live value" split every other progress
+   * readout in this codebase already uses.
+   */
+  empActiveUntil: Record<string, string>;
 }
 
 export interface OccupantUnit {

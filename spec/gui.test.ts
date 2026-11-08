@@ -166,6 +166,16 @@ it("serves the map's base SVG layer for ANU-025's renderBases to mount into", as
   expect(document.querySelector("#map-bases")).not.toBeNull();
 });
 
+it("serves the map's EMP blackout SVG layers for ANU-048's renderEmpBlackout to mount into", async () => {
+  const res = await fetch(new URL("/", baseUrl));
+  const dom = new JSDOM(await res.text());
+  const { document } = dom.window;
+
+  expect(document.querySelector("#map-emp")).not.toBeNull();
+  expect(document.querySelector("#map-emp-countdown")).not.toBeNull();
+  expect(document.querySelector("#map-emp-defs")).not.toBeNull();
+});
+
 it("serves a reachable Options placeholder screen", async () => {
   const res = await fetch(new URL("/", baseUrl));
   const dom = new JSDOM(await res.text());

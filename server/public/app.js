@@ -19,7 +19,7 @@
 /** @typedef {import("../protocol.ts").UnitTypeCatalogEntry} UnitTypeCatalogEntry */
 /** @typedef {import("../protocol.ts").SuburbCaptureState} SuburbCaptureState */
 /** @typedef {import("../protocol.ts").AutoFortifyMode} AutoFortifyMode */
-import { mountMap, unmountMap, renderOwnership, renderBases, renderUnits, renderTransit, renderFactories, renderCapture, setUnitCatalog } from "./map.js";
+import { mountMap, unmountMap, renderOwnership, renderBases, renderUnits, renderTransit, renderFactories, renderCapture, renderEmpBlackout, setUnitCatalog } from "./map.js";
 import { mountSidebar, unmountSidebar, updateSidebarState, selectFromMap, showSidebarError } from "./sidebar.js";
 
 const TOKEN_KEY = "infrastructure-siege:token";
@@ -267,6 +267,7 @@ function renderLobbyScreen(/** @type {LobbyState} */ lobby) {
       renderTransit(occupancy, lobby.members);
       renderFactories(factories, lobby.members);
       renderCapture(captures, lobby.ownership, lobby.members);
+      renderEmpBlackout(lobby.empActiveUntil);
     });
     if (!sidebarMounted) {
       mountSidebar({ send });
@@ -508,6 +509,25 @@ startButton.addEventListener("click", () => {
 window.addEventListener("hashchange", render);
 
 createCallsignInput.value = loadLastCallsign();
+
+// ANU-048: the EMP countdown (renderEmpBlackout) needs to visibly tick down
+// between `lobbyState` broadcasts — LobbyState.empActiveUntil only changes
+// on a strike/expiry, not every second the way captures/factories broadcast
+// on their own ~1s tickers, so a rare state change alone would leave the
+// countdown frozen for up to 20 minutes between redraws. A lightweight
+// client-side interval (this session's call, per issues/ANU-048.md's Done
+// When — the alternative was a server-side ~1s re-broadcast purely to drive
+// a label, which would be a lot of otherwise-identical LobbyState traffic
+// just for one text node) re-renders from the already-known
+// currentLobby.empActiveUntil rather than waiting on a new message; the
+// countdown's underlying expiry timestamp is still entirely server-derived
+// (server/territory.ts's EMP_BLACKOUT_DURATION_MS), this just re-evaluates
+// it against the client's own clock once a second, same "server sends a
+// timestamp, client computes the live value" split every other progress
+// readout here already uses.
+setInterval(() => {
+  if (currentLobby?.started) renderEmpBlackout(currentLobby.empActiveUntil);
+}, 1000);
 
 connect();
 render();

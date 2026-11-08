@@ -6,6 +6,7 @@
 /** @typedef {import("../protocol.ts").PlayerPresence} PlayerPresence */
 /** @typedef {import("../protocol.ts").OccupantUnit} OccupantUnit */
 /** @typedef {import("../protocol.ts").FactoryState} FactoryState */
+import { empBlackoutVisual } from "./emp-blackout-visual.js";
 
 /**
  * One of the viewing player's own unit types present at the selected
@@ -39,6 +40,12 @@
  * @property {FactoryState | null} factory
  * @property {boolean} canBuildFactory
  * @property {MovableUnitGroup[]} movableUnitGroups
+ * @property {string | null} empCountdownLabel - ANU-048: "MM:SS" remaining
+ *   on this suburb's active EMP blackout (map.js's same empBlackoutVisual
+ *   the map itself renders from), or null while no blackout is active here
+ *   — surfaced so a player selecting a blacked-out suburb sees why its
+ *   factory (if any) looks idle instead of just an unexplained stalled
+ *   progress bar.
  */
 
 /**
@@ -61,16 +68,18 @@
  *   factories: FactoryState[],
  *   members: PlayerPresence[],
  *   myPlayerId: string,
+ *   empActiveUntil?: Record<string, string>,
  * }} input
  * @returns {SuburbDetail}
  */
-export function suburbDetailViewModel({ sal_code, ownership, occupancy, factories, members, myPlayerId }) {
+export function suburbDetailViewModel({ sal_code, ownership, occupancy, factories, members, myPlayerId, empActiveUntil = {} }) {
   const memberById = new Map(members.map((m) => [m.playerId, m]));
   const ownerPlayerId = ownership[sal_code] ?? null;
   const owner = ownerPlayerId ? (memberById.get(ownerPlayerId) ?? null) : null;
   const occupants = occupancy.filter((u) => u.sal_code === sal_code);
   const factory = factories.find((f) => f.sal_code === sal_code) ?? null;
   const isOwnedByMe = ownerPlayerId === myPlayerId;
+  const { countdownLabel: empCountdownLabel } = empBlackoutVisual({ empActiveUntil: empActiveUntil[sal_code], now: Date.now() });
 
   const countByType = new Map();
   for (const unit of occupants) {
@@ -99,6 +108,7 @@ export function suburbDetailViewModel({ sal_code, ownership, occupancy, factorie
     // client just offers how many of each type the player could send from
     // here and lets the server accept/reject the actual order.
     movableUnitGroups: [...countByType.entries()].map(([unitTypeKey, count]) => ({ unitTypeKey, count })),
+    empCountdownLabel,
   };
 }
 
