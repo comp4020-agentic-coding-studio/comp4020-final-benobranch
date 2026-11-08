@@ -17,7 +17,7 @@
  * @property {string} destinationSalCode
  * @property {number} travelProgressFraction
  * @property {string} ownerPlayerId
- * @property {"drone" | "robot"} archetype
+ * @property {"drone" | "robot" | "emp"} archetype
  */
 
 /**
@@ -25,13 +25,13 @@
  * @property {string} sal_code - origin
  * @property {string} destinationSalCode
  * @property {string} ownerPlayerId
- * @property {"drone" | "robot"} archetype
+ * @property {"drone" | "robot" | "emp"} archetype
  * @property {number} count
  * @property {number} travelProgressFraction - the group's progress mark position; the LEAST advanced member's fraction, so a trailing straggler never looks like it has already passed the mark the group's dot sits at.
  * @property {string} sampleUnitId - one representative unit id from the group, for map click selection, same convention as unit-marker-layout.js's UnitMarkerGroup.
  */
 
-/** @param {string} sal_code @param {string} destinationSalCode @param {string} ownerPlayerId @param {"drone" | "robot"} archetype */
+/** @param {string} sal_code @param {string} destinationSalCode @param {string} ownerPlayerId @param {"drone" | "robot" | "emp"} archetype */
 function groupKey(sal_code, destinationSalCode, ownerPlayerId, archetype) {
   return `${sal_code}|${destinationSalCode}|${ownerPlayerId}|${archetype}`;
 }

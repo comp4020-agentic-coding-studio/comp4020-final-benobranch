@@ -9,8 +9,8 @@
 
 /**
  * @typedef {object} UnitVisual
- * @property {"drone" | "robot"} icon - distinct per archetype, not just a
- *   color swap — color is reserved for ownership (issues/ANU-013.md).
+ * @property {"drone" | "robot" | "emp"} icon - distinct per archetype, not
+ *   just a color swap — color is reserved for ownership (issues/ANU-013.md).
  * @property {"grounded" | "in-transit"} state
  * @property {number} healthFraction - 0 (destroyed) to 1 (full health);
  *   callers fade/remove the unit once this reaches 0 rather than this
@@ -23,13 +23,21 @@
  * (server/skill-tree.ts's seedSkillGatedUnitTypes) — an advanced variant is
  * a stat upgrade on the same chassis, not a new archetype, so it renders
  * with the same icon as its base unit rather than needing its own.
- * @type {Record<string, "drone" | "robot">}
+ *
+ * ANU-053: "emp" (server/units.ts's EMP_UNIT_TYPE_KEY, added by ANU-048) is
+ * its own archetype, not a drone/robot variant — missing here, this lookup
+ * returned undefined and unitVisual threw for every EMP unit, which
+ * map.js's renderUnits/renderTransit propagated uncaught, wiping every unit
+ * marker on the map (not just the EMP's) the moment one existed. See
+ * issues/ANU-053.md.
+ * @type {Record<string, "drone" | "robot" | "emp">}
  */
 const ARCHETYPE_BY_UNIT_TYPE_KEY = {
   drone: "drone",
   "drone-mk2": "drone",
   robot: "robot",
   "robot-mk2": "robot",
+  emp: "emp",
 };
 
 /**

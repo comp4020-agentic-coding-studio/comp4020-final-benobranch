@@ -19,7 +19,7 @@
  * @property {string} id
  * @property {string} sal_code
  * @property {string} ownerPlayerId
- * @property {"drone" | "robot"} archetype
+ * @property {"drone" | "robot" | "emp"} archetype
  * @property {boolean} inTransit
  */
 
@@ -27,7 +27,7 @@
  * @typedef {object} RawGroup
  * @property {string} sal_code
  * @property {string} ownerPlayerId
- * @property {"drone" | "robot"} archetype
+ * @property {"drone" | "robot" | "emp"} archetype
  * @property {boolean} inTransit
  * @property {number} count
  * @property {string} sampleUnitId
@@ -37,7 +37,7 @@
  * @typedef {object} UnitMarkerGroup
  * @property {string} sal_code
  * @property {string} ownerPlayerId
- * @property {"drone" | "robot"} archetype
+ * @property {"drone" | "robot" | "emp"} archetype
  * @property {boolean} inTransit - true if any unit in the group is mid-travel (unit-visual.js's "in-transit" state) — both archetypes can report this since ANU-038 gave robots real travel time too.
  * @property {number} count
  * @property {string} sampleUnitId - one representative unit id from the group, for map click selection (a group no longer maps 1:1 to a single OccupantUnit).
@@ -46,7 +46,7 @@
  * @property {boolean} lostAUnit - true if `count` is lower than this same (sal_code, ownerPlayerId, archetype) group's count on the previous call — drives the "flash red and jitter" loss feedback.
  */
 
-/** @param {string} sal_code @param {string} ownerPlayerId @param {"drone" | "robot"} archetype */
+/** @param {string} sal_code @param {string} ownerPlayerId @param {"drone" | "robot" | "emp"} archetype */
 function groupKey(sal_code, ownerPlayerId, archetype) {
   return `${sal_code}|${ownerPlayerId}|${archetype}`;
 }
