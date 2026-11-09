@@ -124,6 +124,19 @@ def bounds_to_view_box(b):
     }
 
 
+def polygon_bbox(geom):
+    # ANU-052: per-suburb bbox (SVG coordinate space, same flip as the path/
+    # label_point) so the client can clamp a quadrant-anchored marker's
+    # footprint to this suburb's own geometry. representative_point() (used
+    # for label_point above) is only guaranteed to land INSIDE the polygon —
+    # it has no guaranteed clearance to any edge, so a fixed-size marker
+    # anchored at a corner on label_point can overflow a small/narrow
+    # suburb's actual boundary. Using the suburb's own bbox (not a circle or
+    # fixed margin) keeps the clamp exact per suburb rather than a global
+    # guess that's wrong for both the smallest and largest suburbs at once.
+    return bounds_to_view_box(geom.bounds)
+
+
 output = {
     "source_attribution": {
         "suburbs": "ABS ASGS Edition 3 (2021) Suburbs and Localities (SAL), CC BY 4.0, https://geo.abs.gov.au/arcgis/rest/services/ASGS2021/SAL/MapServer",
@@ -136,6 +149,7 @@ output = {
             "sal_code": row["sal_code"],
             "path": polygon_to_path(row.geometry),
             "label_point": polygon_label_point(row.geometry),
+            "bbox": polygon_bbox(row.geometry),
         }
         for _, row in simplified.iterrows()
     ],

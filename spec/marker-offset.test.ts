@@ -10,7 +10,7 @@
 // no-manual-e2e rule. Same "no DOM, pure data in/shape out" pattern as
 // spec/unit-marker-layout.test.ts/spec/factory-visual.test.ts.
 import { expect, it } from "vitest";
-import { quadrantAnchor } from "../server/public/marker-offset.js";
+import { quadrantAnchor, clampMarkerSize } from "../server/public/marker-offset.js";
 
 /** @returns {[number, number, number, number]} [minX, minY, maxX, maxY] */
 function bounds(
@@ -113,4 +113,56 @@ it("a marker still CENTERED on label_point (the unit-stack marker, which keeps i
   const farCornerInsideUnit =
     dcMinX >= unitBounds[0] && dcMinX <= unitMaxX && dcMinY >= unitBounds[1] && dcMinY <= unitMaxY;
   expect(farCornerInsideUnit).toBe(false);
+});
+
+// ANU-052: clampMarkerSize() tests — label_point has zero guaranteed
+// clearance to the suburb's own polygon edge (it's just Shapely's
+// representative_point()), so quadrantAnchor alone can place a marker's
+// footprint outside its own suburb on a small/narrow one. clampMarkerSize
+// shrinks the size used for anchoring to whatever actually fits inside the
+// suburb's own bbox in the anchor direction, before quadrantAnchor runs.
+
+it("leaves size unchanged when the suburb's bbox has plenty of room in the anchor direction", () => {
+  const labelPoint: [number, number] = [500, 500];
+  const bbox = { x: 0, y: 0, width: 1000, height: 1000 }; // 500 clearance on every side
+  expect(clampMarkerSize(labelPoint, 400, -1, -1, bbox)).toBe(400);
+  expect(clampMarkerSize(labelPoint, 400, 1, 1, bbox)).toBe(400);
+});
+
+it("shrinks size to the smaller of the two clearances in the anchor direction when it would otherwise overflow the bbox", () => {
+  const labelPoint: [number, number] = [100, 50];
+  // Anchoring upper-left (-1,-1): clearance to bbox's left edge is 100,
+  // clearance to its top edge is 50 — the binding constraint is the smaller.
+  const bbox = { x: 0, y: 0, width: 1000, height: 1000 };
+  expect(clampMarkerSize(labelPoint, 900, -1, -1, bbox)).toBe(50);
+});
+
+it("clamps uniformly (not per-axis) so a shrunk marker stays square rather than squashed on one axis", () => {
+  const labelPoint: [number, number] = [100, 500];
+  const bbox = { x: 0, y: 0, width: 1000, height: 1000 };
+  // x-clearance (100) is the binding constraint; the returned size — used
+  // for both width and height by every call site in map.js — must be 100,
+  // not some different, non-square value derived from the y-clearance.
+  expect(clampMarkerSize(labelPoint, 900, -1, -1, bbox)).toBe(100);
+});
+
+it("never returns a negative size even if label_point sits exactly on (or numerically past) the bbox edge", () => {
+  const labelPoint: [number, number] = [0, 0];
+  const bbox = { x: 0, y: 0, width: 1000, height: 1000 };
+  expect(clampMarkerSize(labelPoint, 400, -1, -1, bbox)).toBe(0);
+});
+
+it("regression: City suburb's measured mega-tier overflow (issues/ANU-052.md) is clamped to fit, and the resulting marker footprint stays within the suburb's own bbox", () => {
+  // Approximate measured values for "City" from the issue's own root-cause
+  // analysis: ~755 clearance to the left edge, ~694 to the top, for a
+  // 900-unit mega marker anchored upper-left.
+  const labelPoint: [number, number] = [1000, 900];
+  const bbox = { x: 1000 - 755, y: 900 - 694, width: 2000, height: 2000 };
+  const clamped = clampMarkerSize(labelPoint, 900, -1, -1, bbox);
+  expect(clamped).toBeLessThan(900); // the clamp must actually engage
+  expect(clamped).toBeCloseTo(694); // bound by the smaller (vertical) clearance
+  const [cx, cy] = quadrantAnchor(labelPoint, clamped, -1, -1);
+  const [minX, minY] = bounds([cx, cy], clamped);
+  expect(minX).toBeGreaterThanOrEqual(bbox.x);
+  expect(minY).toBeGreaterThanOrEqual(bbox.y);
 });

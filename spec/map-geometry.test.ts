@@ -8,12 +8,18 @@
 import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
 import { describe, expect, inject, it } from "vitest";
+import { clampMarkerSize, quadrantAnchor } from "../server/public/marker-offset.js";
 
 const baseUrl = inject("baseUrl");
 
 type MapNode = { idx: number; sal_code: string; name: string; is_remainder: boolean };
-type MapData = { suburbs: MapNode[]; data_centers: { name: string }[]; spawn_table_by_lobby_size: Record<string, { spawns: string[] }> };
-type GeoSuburb = { sal_code: string; path: string; label_point: [number, number] };
+type MapData = {
+  suburbs: MapNode[];
+  data_centers: { name: string; tier: "mega" | "major" | "standard" }[];
+  spawn_table_by_lobby_size: Record<string, { spawns: string[] }>;
+};
+type ViewBox = { x: number; y: number; width: number; height: number };
+type GeoSuburb = { sal_code: string; path: string; label_point: [number, number]; bbox: ViewBox };
 type MapGeometry = { suburbs: GeoSuburb[]; full_view_box: object; urban_view_box: object };
 
 const map: MapData = JSON.parse(readFileSync("scripts/map/data/map.json", "utf8"));
@@ -38,6 +44,20 @@ describe("geometry data integrity", () => {
     }
   });
 
+  it("every suburb has a bbox that actually contains its own label_point", () => {
+    // ANU-052: build_geometry.py's bbox is the clamp input map.js uses to
+    // keep quadrant-anchored markers inside their own suburb — a bbox that
+    // didn't contain label_point would make clampMarkerSize produce a
+    // negative/zero clearance on some suburb's real data.
+    for (const s of geometry.suburbs) {
+      const [lx, ly] = s.label_point;
+      expect(lx).toBeGreaterThanOrEqual(s.bbox.x);
+      expect(lx).toBeLessThanOrEqual(s.bbox.x + s.bbox.width);
+      expect(ly).toBeGreaterThanOrEqual(s.bbox.y);
+      expect(ly).toBeLessThanOrEqual(s.bbox.y + s.bbox.height);
+    }
+  });
+
   it("every data center name resolves to a real suburb with geometry", () => {
     const nameToCode = new Map(map.suburbs.map((s) => [s.name, s.sal_code]));
     const geoCodes = new Set(geometry.suburbs.map((s) => s.sal_code));
@@ -56,6 +76,56 @@ describe("geometry data integrity", () => {
         const code = nameToCode.get(name);
         expect(code, `spawn '${name}' has no matching suburb`).toBeDefined();
         expect(geoCodes.has(code!), `spawn '${name}' has no geometry`).toBe(true);
+      }
+    }
+  });
+});
+
+describe("marker footprint stays inside its own suburb (ANU-052 regression)", () => {
+  const DATA_CENTER_SIZES = { mega: 900, major: 640, standard: 440 } as const;
+  const nameToSalCode = new Map(map.suburbs.map((s) => [s.name, s.sal_code]));
+  const salCodeToGeo = new Map(geometry.suburbs.map((s) => [s.sal_code, s]));
+
+  it("City (mega tier, the measured overflow case from issues/ANU-052.md) no longer extends past its own bbox", () => {
+    const salCode = nameToSalCode.get("City");
+    const geo = salCode ? salCodeToGeo.get(salCode) : undefined;
+    expect(geo, "City suburb must exist with geometry").toBeDefined();
+    if (!geo) return;
+
+    const rawSize = DATA_CENTER_SIZES.mega;
+    const clampedSize = clampMarkerSize(geo.label_point, rawSize, -1, -1, geo.bbox);
+    // This is the actual bug: label_point's clearance to City's own bbox is
+    // less than the mega marker's 900-unit size, so the clamp must kick in.
+    expect(clampedSize).toBeLessThan(rawSize);
+
+    const [cx, cy] = quadrantAnchor(geo.label_point, clampedSize, -1, -1);
+    const minX = cx - clampedSize / 2;
+    const minY = cy - clampedSize / 2;
+    expect(minX).toBeGreaterThanOrEqual(geo.bbox.x);
+    expect(minY).toBeGreaterThanOrEqual(geo.bbox.y);
+  });
+
+  it("every data center's marker (clamped) stays within its own suburb's bbox, in all four directions it could anchor", () => {
+    for (const dc of map.data_centers) {
+      const salCode = nameToSalCode.get(dc.name);
+      const geo = salCode ? salCodeToGeo.get(salCode) : undefined;
+      if (!geo) continue;
+      for (const [dirX, dirY] of [
+        [-1, -1],
+        [1, -1],
+        [-1, 1],
+        [1, 1],
+      ] as const) {
+        const size = clampMarkerSize(geo.label_point, DATA_CENTER_SIZES[dc.tier], dirX, dirY, geo.bbox);
+        const [cx, cy] = quadrantAnchor(geo.label_point, size, dirX, dirY);
+        const minX = cx - size / 2;
+        const minY = cy - size / 2;
+        const maxX = cx + size / 2;
+        const maxY = cy + size / 2;
+        expect(minX, `${dc.name} dir(${dirX},${dirY}) minX`).toBeGreaterThanOrEqual(geo.bbox.x - 0.01);
+        expect(minY, `${dc.name} dir(${dirX},${dirY}) minY`).toBeGreaterThanOrEqual(geo.bbox.y - 0.01);
+        expect(maxX, `${dc.name} dir(${dirX},${dirY}) maxX`).toBeLessThanOrEqual(geo.bbox.x + geo.bbox.width + 0.01);
+        expect(maxY, `${dc.name} dir(${dirX},${dirY}) maxY`).toBeLessThanOrEqual(geo.bbox.y + geo.bbox.height + 0.01);
       }
     }
   });
