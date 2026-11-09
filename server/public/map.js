@@ -665,20 +665,33 @@ export function renderUnits(units, members) {
   unitsLayer.replaceChildren();
   const colorByPlayerId = new Map(members.map((m) => [m.playerId, m.color]));
 
-  const resolved = units
-    .map((unit) => {
+  // ANU-053: unitVisual() throws for an unrecognized unitTypeKey (it did,
+  // for "emp", until ARCHETYPE_BY_UNIT_TYPE_KEY learned about it — see
+  // unit-visual.js). That previously happened inside a plain .map(), which
+  // aborts the whole array on its first throw — since unitsLayer was already
+  // cleared above, one bad unit anywhere in the list wiped every marker, not
+  // just its own. A try/catch per unit keeps that a one-unit loss (skipped,
+  // logged) instead of a whole-layer one, so a FUTURE unit type with the
+  // same gap can't reproduce this failure mode either.
+  /** @type {{ id: string, sal_code: string, ownerPlayerId: string, archetype: import("./unit-visual.js").UnitVisual["icon"], inTransit: boolean }[]} */
+  const resolved = [];
+  for (const unit of units) {
+    try {
       const unitType = unitTypesByKey.get(unit.unitTypeKey);
       const visual = unitVisual(unit, unitType?.health ?? unit.health);
-      return {
+      resolved.push({
         id: unit.id,
         sal_code: unit.sal_code,
         ownerPlayerId: unit.ownerPlayerId,
         archetype: visual.icon,
         inTransit: visual.state === "in-transit",
-      };
-    })
-    .filter((unit) => !unit.inTransit);
-  const { groups, nextCountByGroupKey } = layoutUnitMarkers(resolved, unitGroupCounts);
+      });
+    } catch (err) {
+      console.warn(`renderUnits: skipping unit '${unit.id}' (unitTypeKey '${unit.unitTypeKey}')`, err);
+    }
+  }
+  const grounded = resolved.filter((unit) => !unit.inTransit);
+  const { groups, nextCountByGroupKey } = layoutUnitMarkers(grounded, unitGroupCounts);
   unitGroupCounts = nextCountByGroupKey;
 
   for (const unitGroup of groups) {
@@ -777,20 +790,29 @@ export function renderTransit(units, members) {
   transitLayer.replaceChildren();
   const colorByPlayerId = new Map(members.map((m) => [m.playerId, m.color]));
 
+  // ANU-053: same per-unit try/catch as renderUnits, and for the same
+  // reason — unitVisual() throwing on an unrecognized unitTypeKey used to
+  // abort this whole `for` loop's remaining iterations too, after
+  // transitLayer had already been cleared above, wiping every in-transit
+  // arrow rather than just the one bad unit's.
   /** @type {import("./transit-visual.js").ResolvedTransitUnit[]} */
   const resolved = [];
   for (const unit of units) {
-    const unitType = unitTypesByKey.get(unit.unitTypeKey);
-    const visual = unitVisual(unit, unitType?.health ?? unit.health);
-    if (visual.state !== "in-transit" || unit.destinationSalCode === undefined) continue;
-    resolved.push({
-      id: unit.id,
-      sal_code: unit.sal_code,
-      destinationSalCode: unit.destinationSalCode,
-      travelProgressFraction: unit.travelProgressFraction ?? 0,
-      ownerPlayerId: unit.ownerPlayerId,
-      archetype: visual.icon,
-    });
+    try {
+      const unitType = unitTypesByKey.get(unit.unitTypeKey);
+      const visual = unitVisual(unit, unitType?.health ?? unit.health);
+      if (visual.state !== "in-transit" || unit.destinationSalCode === undefined) continue;
+      resolved.push({
+        id: unit.id,
+        sal_code: unit.sal_code,
+        destinationSalCode: unit.destinationSalCode,
+        travelProgressFraction: unit.travelProgressFraction ?? 0,
+        ownerPlayerId: unit.ownerPlayerId,
+        archetype: visual.icon,
+      });
+    } catch (err) {
+      console.warn(`renderTransit: skipping unit '${unit.id}' (unitTypeKey '${unit.unitTypeKey}')`, err);
+    }
   }
 
   for (const transitGroup of layoutTransitArrows(resolved)) {

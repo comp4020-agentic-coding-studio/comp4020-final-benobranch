@@ -59,3 +59,34 @@ it("an advanced drone (drone-mk2) mid-flight still reports 'in-transit' like a b
   );
   expect(inTransit.state).toBe("in-transit");
 });
+
+// ANU-053: ANU-048 added a real "emp" unit_types row (server/units.ts's
+// EMP_UNIT_TYPE_KEY) but ARCHETYPE_BY_UNIT_TYPE_KEY was never updated to
+// recognize it — unitVisual() threw for any emp unit, and map.js's
+// renderUnits/renderTransit propagated that uncaught (no try/catch at
+// either call site), wiping every unit marker on the map the moment one
+// emp unit existed in the occupancy list, not just the emp's own marker.
+it("resolves an 'emp' unit type without throwing, as its own archetype distinct from drone/robot", () => {
+  const emp = unitVisual({ ...BASE_UNIT, unitTypeKey: "emp", health: 1 }, 1);
+  expect(emp.icon).toBe("emp");
+  expect(emp.icon).not.toBe("drone");
+  expect(emp.icon).not.toBe("robot");
+});
+
+it("an in-transit emp unit reports state 'in-transit', same as drone/robot", () => {
+  const inTransit = unitVisual(
+    { ...BASE_UNIT, unitTypeKey: "emp", health: 1, destinationSalCode: "80002", moveStartedAt: "2026-11-03T00:00:00.000Z" },
+    1,
+  );
+  expect(inTransit.state).toBe("in-transit");
+});
+
+it("a mix of unit types including an emp doesn't throw for any of them (regression for ANU-053's whole-layer wipeout)", () => {
+  const units = [
+    { ...BASE_UNIT, id: "d1", unitTypeKey: "drone" },
+    { ...BASE_UNIT, id: "e1", unitTypeKey: "emp", health: 1 },
+    { ...BASE_UNIT, id: "r1", unitTypeKey: "robot" },
+  ];
+  const visuals = units.map((u) => unitVisual(u, u.health));
+  expect(visuals.map((v) => v.icon)).toEqual(["drone", "emp", "robot"]);
+});
